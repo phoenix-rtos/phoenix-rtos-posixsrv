@@ -416,7 +416,7 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 	r->msg.o.io.err = i;
 
 	/* On master read wake pending slave writers up */
-	if ((writer = pty->write_requests) != NULL) {
+	if (wake_writer && (writer = pty->write_requests) != NULL) {
 		LIST_REMOVE(&pty->write_requests, writer);
 
 		if ((writer = _pts_write(pty, writer)) != NULL)
