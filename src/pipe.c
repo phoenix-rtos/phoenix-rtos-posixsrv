@@ -41,6 +41,14 @@
 static handler_t pipe_create_op, pipe_write_op, pipe_read_op, pipe_open_op, pipe_close_op, pipe_link_op, pipe_unlink_op;
 
 
+static int pipe_lock(handle_t lock, int nonblock)
+{
+	if (nonblock) return mutexTry(lock);
+	while (mutexLock(lock) < 0);
+	return 0;
+}
+
+
 static void pipe_destroy(object_t *o);
 
 
@@ -251,7 +259,9 @@ int pipe_write(pipe_t *p, unsigned mode, request_t *r)
 	if (!sz)
 		return 0;
 
-	while (mutexLock(p->lock) < 0);
+	if (pipe_lock(p->lock, mode & O_NONBLOCK) < 0)
+		return -EWOULDBLOCK;
+
 	if (p->rrefs) {
 		/* write to pending readers */
 		while (p->queue != NULL && /*!p->full &&*/ bytes < sz) {
@@ -300,7 +310,8 @@ int pipe_read(pipe_t *p, unsigned mode, request_t *r)
 	if (!sz)
 		return 0;
 
-	while (mutexLock(p->lock) < 0);
+	if (pipe_lock(p->lock, mode & O_NONBLOCK) < 0)
+		return -EWOULDBLOCK;
 
 	/* read from buffer */
 	was_full = p->full;
@@ -354,7 +365,9 @@ int pipe_open(pipe_t *p, unsigned flags, request_t *r)
 {
 	PIPE_TRACE("open %d/%x %s", object_id(&p->object), flags, flags & O_WRONLY ? "W" : "R");
 
-	while (mutexLock(p->lock) < 0);
+	if (pipe_lock(p->lock, flags & O_NONBLOCK) < 0)
+		return -EWOULDBLOCK;
+
 	if (flags & O_WRONLY) {
 		if (!p->rrefs) {
 			if (p->queue != NULL) {
