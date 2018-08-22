@@ -23,11 +23,13 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/events.h>
 
 #include "posix/idtree.h"
 #include "posixsrv_private.h"
-#include "posixsrv.h"
 
+//#define TRACE(str, ...) printf("posixsrv event: " str "\n", ##__VA_ARGS__)
+#define TRACE(str, ...)
 
 #define INITIAL_EVENT_BUF_COUNT 16
 #define GROW_EVENT_BUF(sz) (2 * (sz))
@@ -139,6 +141,8 @@ static int event_cmp(rbnode_t *n1, rbnode_t *n2)
 
 static void queue_add(evqueue_t *queue, evqueue_t **wakeq)
 {
+	TRACE("queue_add()");
+
 	mutexLock(event_common.lock);
 	if (queue->next == NULL) {
 		object_ref(&queue->object);
@@ -179,6 +183,8 @@ static eventry_t *entry_find(oid_t *oid)
 
 static void _entry_remove(eventry_t *entry)
 {
+	TRACE("_entry_remove()");
+
 	resourceDestroy(entry->lock);
 	lib_rbRemove(&event_common.notes, &entry->node);
 	free(entry);
@@ -187,6 +193,8 @@ static void _entry_remove(eventry_t *entry)
 
 static eventry_t *_entry_new(oid_t *oid)
 {
+	TRACE("_entry_new()");
+
 	eventry_t *entry;
 
 	if ((entry = calloc(1, sizeof(eventry_t))) == NULL)
@@ -223,6 +231,8 @@ static void entry_put(eventry_t *entry)
 
 static void _entry_register(eventry_t *entry, event_t *event, evqueue_t **wakeq)
 {
+	TRACE("_entry_register()");
+
 	evnote_t *note;
 	unsigned short typebit;
 
@@ -256,6 +266,8 @@ static void _entry_register(eventry_t *entry, event_t *event, evqueue_t **wakeq)
 
 static void _entry_notify(eventry_t *entry)
 {
+	TRACE("_entry_notify()");
+
 	msg_t msg;
 
 	msg.type = mtSetAttr;
@@ -272,6 +284,8 @@ static void _entry_notify(eventry_t *entry)
 
 static void _note_poll(evnote_t *note)
 {
+	TRACE("_note_poll()");
+
 	/* TODO: only poll events known to be level triggered? */
 	msg_t msg;
 
@@ -291,6 +305,8 @@ static void _note_poll(evnote_t *note)
 
 static void _entry_recalculate(eventry_t *entry)
 {
+	TRACE("_entry_recalculate()");
+
 	evnote_t *note;
 	unsigned short mask = 0, oldmask;
 
@@ -311,6 +327,8 @@ static void _entry_recalculate(eventry_t *entry)
 
 static evnote_t *_note_new(evqueue_t *queue, eventry_t *entry)
 {
+	TRACE("_note_new()");
+
 	evnote_t *note;
 
 	if ((note = calloc(1, sizeof(evnote_t))) == NULL)
@@ -330,6 +348,8 @@ static evnote_t *_note_new(evqueue_t *queue, eventry_t *entry)
 
 static void _note_remove(evnote_t *note)
 {
+	TRACE("_note_remove()");
+
 	LIST_REMOVE(&note->entry->notes, note);
 	entry_put(note->entry);
 	object_put(&note->queue->object);
@@ -341,6 +361,8 @@ static void _note_remove(evnote_t *note)
 
 static void _note_merge(evnote_t *note, evsub_t *sub)
 {
+	TRACE("_note_merge()");
+
 	if (sub->flags & evAdd) {
 		note->mask    |= sub->types;
 		note->enabled |= sub->types;
@@ -373,6 +395,8 @@ static void _note_merge(evnote_t *note, evsub_t *sub)
 
 static int _event_subscribe(evqueue_t *queue, evsub_t *sub, int count)
 {
+	TRACE("_event_subscribe()");
+
 	evnote_t *note;
 	eventry_t *entry;
 	unsigned short mask;
@@ -435,6 +459,8 @@ static void queue_wakeup(evqueue_t *queue);
 
 void event_register(event_t *events, int count)
 {
+	TRACE("_event_register()");
+
 	event_t *event;
 	eventry_t *entry;
 	evqueue_t *wakeq = NULL;
@@ -459,6 +485,8 @@ void event_register(event_t *events, int count)
 
 static evqueue_t *queue_create(void)
 {
+	TRACE("queue_create()");
+
 	evqueue_t *queue;
 
 	if ((queue = calloc(1, sizeof(evqueue_t))) == NULL)
@@ -477,6 +505,8 @@ static evqueue_t *queue_create(void)
 
 static void queue_destroy(object_t *o)
 {
+	TRACE("queue_destroy()");
+
 	evqueue_t *queue = evqueue(o);
 
 	if (queue->notes != NULL || queue->requests != NULL)
@@ -489,6 +519,8 @@ static void queue_destroy(object_t *o)
 
 static int _event_read(evqueue_t *queue, event_t *event, int eventcnt)
 {
+	TRACE("_event_read()");
+
 	int type, i = 0;
 	unsigned short typebit;
 	evnote_t *note;
@@ -532,6 +564,8 @@ static int _event_read(evqueue_t *queue, event_t *event, int eventcnt)
 
 static void _queue_poll(evqueue_t *queue)
 {
+	TRACE("_queue_poll()");
+
 	evnote_t *note;
 
 	if ((note = queue->notes) == NULL)
@@ -591,6 +625,8 @@ static int queue_unpack(msg_t *msg, evsub_t **subs, int *subcnt, event_t **event
 
 static void queue_wakeup(evqueue_t *queue)
 {
+	TRACE("queue_wakeup()");
+
 	request_t *r, *filled = NULL, *empty;
 	int count = 0;
 	event_t *events;
@@ -634,6 +670,8 @@ static void queue_wakeup(evqueue_t *queue)
 
 static request_t *queue_close_op(object_t *o, request_t *r)
 {
+	TRACE("queue_close_op()");
+
 	evqueue_t *queue = evqueue(o);
 	request_t *p;
 	eventry_t *entry;
@@ -661,6 +699,8 @@ static request_t *queue_close_op(object_t *o, request_t *r)
 
 static int _queue_readwrite(evqueue_t *queue, evsub_t *subs, int subcnt, event_t *events, int evcnt)
 {
+	TRACE("_queue_readwrite()");
+
 	if (subcnt)
 		_event_subscribe(queue, subs, subcnt);
 
@@ -675,6 +715,8 @@ static int _queue_readwrite(evqueue_t *queue, evsub_t *subs, int subcnt, event_t
 
 static request_t *queue_write_op(object_t *o, request_t *r)
 {
+	TRACE("queue_write_op()");
+
 	evqueue_t *queue = evqueue(o);
 	int count = 0;
 
@@ -738,6 +780,8 @@ static request_t *queue_devctl_op(object_t *o, request_t *r)
 
 static void queue_timeout_op(request_t *r)
 {
+	TRACE("queue_timeout_op()");
+
 	evqueue_t *queue = evqueue(r->object);
 
 	mutexLock(queue->lock);
@@ -777,6 +821,8 @@ static request_t *sink_create_op(object_t *o, request_t *r)
 
 static request_t *sink_write_op(object_t *o, request_t *r)
 {
+	TRACE("sink_write()");
+
 	event_t stackbuf[64];
 	event_t *events;
 	unsigned eventcnt;

@@ -33,7 +33,6 @@
 #include "posix/idtree.h"
 
 #include "posixsrv_private.h"
-#include "posixsrv.h"
 
 //#define TRACE(str, ...) printf("posixsrv: " str "\n", ##__VA_ARGS__)
 #define TRACE(str, ...)

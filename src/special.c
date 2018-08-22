@@ -29,7 +29,6 @@
 #include <string.h>
 #include <fcntl.h>
 
-#include "posixsrv.h"
 #include "posixsrv_private.h"
 
 

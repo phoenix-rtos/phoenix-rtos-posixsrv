@@ -87,12 +87,6 @@ static operations_t ptm_ops = {
 };
 
 
-static struct {
-	oid_t eventSink;
-	int eventSinkOpen;
-} pty_common;
-
-
 typedef struct {
 	object_t master, slave;
 	libtty_common_t tty;
@@ -107,40 +101,6 @@ typedef struct {
 
 	handle_t mutex, cond;
 } pty_t;
-
-
-static void openEventSink(void)
-{
-	if (!pty_common.eventSinkOpen && lookup("/dev/event/sink", NULL, &pty_common.eventSink) == 0)
-		pty_common.eventSinkOpen = 1;
-}
-
-
-static void sendEvent(pty_t *pty, object_t *o, unsigned short type)
-{
-	event_t event = {0};
-	msg_t msg;
-
-	if (pty->evmask & (1 << type)) {
-		openEventSink();
-
-		if (pty_common.eventSinkOpen) {
-			event.oid.port = srv_port();
-			event.oid.id = object_id(o);
-
-			event.type = type;
-			msg.type = mtWrite;
-
-			msg.i.io.oid = pty_common.eventSink;
-			msg.i.data = &event;
-			msg.i.size = sizeof(event);
-			msg.o.data = NULL;
-			msg.o.size = 0;
-
-			msgSend(pty_common.eventSink.port, &msg);
-		}
-	}
-}
 
 
 static void pty_cancelRequests(pty_t *pty)
@@ -366,6 +326,7 @@ static request_t *ptm_write_op(object_t *o, request_t *r)
 	size_t i;
 	int wake_reader = 0;
 	request_t *reader;
+	event_t event = {0};
 
 	/* On master write wake pending slave readers up */
 	mutexLock(pty->mutex);
@@ -382,8 +343,13 @@ static request_t *ptm_write_op(object_t *o, request_t *r)
 	}
 	mutexUnlock(pty->mutex);
 
-	if (wake_reader)
-		sendEvent(pty, &pty->slave, 0 /* log POLLIN */);
+	if (wake_reader && (pty->evmask & (1 << evtDataIn))) {
+		event.oid.port = srv_port();
+		event.oid.id = object_id(&pty->slave);
+		event.type = evtDataIn;
+
+		eventsSend(&event, 1);
+	}
 
 	r->msg.o.io.err = i;
 	return r;
@@ -394,6 +360,7 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 {
 	int i, wake_writer;
 	request_t *writer;
+	event_t event = {0};
 
 	if (pty->state & PTY_CLOSING) {
 		r->msg.o.io.err = -EBADF;
@@ -425,8 +392,13 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 		wake_writer = libtty_poll_status(&pty->tty) & POLLOUT;
 	}
 
-	if (wake_writer)
-		sendEvent(pty, &pty->slave, 1 /* log POLLOUT */);
+	if (wake_writer && (pty->evmask & (1 << evtDataOut))) {
+		event.oid.port = srv_port();
+		event.oid.id = object_id(&pty->slave);
+		event.type = evtDataOut;
+
+		eventsSend(&event, 1);
+	}
 
 	return r;
 }
@@ -645,8 +617,6 @@ int pty_init()
 {
 	object_t *o;
 	int err;
-
-	pty_common.eventSinkOpen = 0;
 
 	mkdir("/dev/pts", 0);
 

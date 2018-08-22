@@ -30,7 +30,6 @@
 #include <fcntl.h>
 #include "posix/idtree.h"
 
-#include "posixsrv.h"
 #include "posixsrv_private.h"
 
 
@@ -114,18 +113,12 @@ int pipe_create(int type, int *id, unsigned open)
 		return -ENOMEM;
 	}
 
-	if (type == pxBufferedPipe) {
-		if ((p->buf = mmap(NULL, PIPE_BUFSZ, PROT_READ | PROT_WRITE, MAP_NONE, OID_NULL, 0)) == MAP_FAILED) {
-			free(p);
-			return -ENOMEM;
-		}
+	if ((p->buf = mmap(NULL, PIPE_BUFSZ, PROT_READ | PROT_WRITE, MAP_NONE, OID_NULL, 0)) == MAP_FAILED) {
+		free(p);
+		return -ENOMEM;
+	}
 
-		p->full = 0;
-	}
-	else {
-		p->buf = NULL;
-		p->full = 1;
-	}
+	p->full = 0;
 
 	object_create(&p->object, &pipe_ops);
 
