@@ -347,8 +347,8 @@ int main(int argc, char **argv)
 	if (portCreate(&posixsrv_common.port) < 0)
 		fail("port create");
 
-	mkdir("/dev", 0);
-	mkdir("/dev/posix", 0);
+	mkdir("/dev", 0777);
+	mkdir("/dev/posix", 0777);
 
 	if (special_init() < 0)
 		fail("special init");
