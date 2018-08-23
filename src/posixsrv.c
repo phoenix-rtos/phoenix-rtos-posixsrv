@@ -196,6 +196,10 @@ void rq_setResponse(request_t *r, int response)
 	case mtDevCtl:
 		ioctl_setResponse(&r->msg, 0, response, NULL);
 		break;
+	case mtGetAttr:
+	case mtSetAttr:
+		r->msg.o.attr.val = response;
+		break;
 	default:
 		/* TODO: other cases */
 		r->msg.o.io.err = response;

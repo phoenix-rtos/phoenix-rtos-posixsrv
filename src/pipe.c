@@ -28,6 +28,7 @@
 #include <errno.h>
 #include <string.h>
 #include <fcntl.h>
+#include <poll.h>
 #include "posix/idtree.h"
 
 #include "posixsrv_private.h"
@@ -38,6 +39,7 @@
 
 
 static handler_t pipe_create_op, pipe_write_op, pipe_read_op, pipe_open_op, pipe_close_op, pipe_link_op, pipe_unlink_op;
+static handler_t pipe_getattr_op;
 
 
 static int pipe_lock(handle_t lock, int nonblock)
@@ -78,18 +80,23 @@ static operations_t pipe_ops = {
 	.write = pipe_write_op,
 	.link = pipe_link_op,
 	.unlink = pipe_unlink_op,
+	.getattr = pipe_getattr_op,
 	.release = pipe_destroy,
 };
 
 
-int pipe_free(object_t *o)
+int _pipe_free(pipe_t *p)
 {
-	pipe_t *p = (pipe_t *)o;
-
 	if (p->w == p->r)
 		return p->full ? 0 : PIPE_BUFSZ;
 
 	return (p->r - p->w + PIPE_BUFSZ) & (PIPE_BUFSZ - 1);
+}
+
+
+int pipe_free(object_t *o)
+{
+	return _pipe_free((pipe_t *)o);
 }
 
 
@@ -513,6 +520,31 @@ int pipe_unlink(pipe_t *p, const char *path)
 static request_t *pipe_unlink_op(object_t *o, request_t *r)
 {
 	r->msg.o.io.err = pipe_unlink((pipe_t *)o, r->msg.i.data);
+	return r;
+}
+
+
+static request_t *pipe_getattr_op(object_t *o, request_t *r)
+{
+	int err = 0;
+	pipe_t *p = (pipe_t *)o;
+	int free;
+
+	if (r->msg.i.attr.type == atPollStatus) {
+		mutexLock(p->lock);
+		free = _pipe_free(p);
+		if (free)
+		    err |= POLLOUT;
+		if (free != PIPE_BUFSZ)
+			err |= POLLIN;
+		mutexUnlock(p->lock);
+		err &= r->msg.i.attr.val;
+	}
+	else {
+		err = -EINVAL;
+	}
+
+	rq_setResponse(r, err);
 	return r;
 }
 
