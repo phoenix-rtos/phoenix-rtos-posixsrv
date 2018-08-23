@@ -35,7 +35,6 @@
 
 #include "posix/idtree.h"
 #include "posixsrv_private.h"
-#include "posixsrv.h"
 
 //#define PTY_TRACE(str, ...) printf("posixsrv pty: " str "\n", ##__VA_ARGS__)
 #define PTY_TRACE(str, ...)
