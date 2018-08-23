@@ -8,9 +8,6 @@
 
 CROSS ?= arm-phoenix-
 
-MKDEP = $(CROSS)gcc -MM
-MKDEPFLAGS = $(CFLAGS)
-
 CC = $(CROSS)gcc
 
 CFLAGS += -Os -Wall -Wstrict-prototypes -g\
@@ -19,12 +16,13 @@ CFLAGS += -Os -Wall -Wstrict-prototypes -g\
 
 CFLAGS += -fdata-sections -ffunction-sections
 
-AR = $(CROSS)ar
-ARFLAGS = -r
-
 LD = $(CROSS)ld
-LDFLAGS = -z max-page-size=0x1000
-#LDFLAGS += --gc-sections
+LDFLAGS += -z max-page-size=0x1000
+LDFLAGS += --gc-sections
+
+GCCLIB := $(shell $(CC) $(CFLAGS) -print-libgcc-file-name)
+PHOENIXLIB := $(shell $(CC) $(CFLAGS) -print-file-name=libphoenix.a)
+LDLIBS += $(PHOENIXLIB) $(GCCLIB)
 
 OBJCOPY = $(CROSS)objcopy
 OBJDUMP = $(CROSS)objdump

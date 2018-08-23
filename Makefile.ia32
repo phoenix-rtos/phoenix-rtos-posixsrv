@@ -7,18 +7,15 @@
 #
 
 CROSS ?= i386-pc-phoenix-
-
-MKDEP = $(CROSS)gcc -MM
-MKDEPFLAGS = $(CFLAGS)
-
 CC = $(CROSS)gcc
 CFLAGS += -O2 -g -Wall -Wstrict-prototypes -fomit-frame-pointer -fno-strength-reduce
 
-AR = $(CROSS)ar
-ARFLAGS = -r
-
 LD = $(CROSS)ld
 #LDFLAGS = -m elf_i386
+
+GCCLIB := $(shell $(CC) $(CFLAGS) -print-libgcc-file-name)
+PHOENIXLIB := $(shell $(CC) $(CFLAGS) -print-file-name=libphoenix.a)
+LDLIBS += $(PHOENIXLIB) $(GCCLIB)
 
 OBJCOPY = $(CROSS)objcopy
 OBJDUMP = $(CROSS)objdump
