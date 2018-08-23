@@ -334,10 +334,10 @@ static request_t *ptm_write_op(object_t *o, request_t *r)
 	event_t event = {0};
 
 	/* On master write wake pending slave readers up */
-	mutexLock(pty->mutex);
 	for (i = 0; i < r->msg.i.size; ++i)
 		libtty_putchar(&pty->tty, ((unsigned char *)r->msg.i.data)[i], &wake_reader);
 
+	mutexLock(pty->mutex);
 	if (wake_reader && ((reader = pty->read_requests) != NULL)) {
 		LIST_REMOVE(&pty->read_requests, reader);
 
@@ -381,10 +381,12 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 		LIST_ADD(&pty->read_master, r);
 		return NULL;
 	}
+	mutexUnlock(pty->mutex);
 
 	for (i = 0; i < r->msg.o.size && libtty_txready(&pty->tty); ++i)
 		((unsigned char *)r->msg.o.data)[i] = libtty_getchar(&pty->tty, &wake_writer);
 
+	mutexLock(pty->mutex);
 	rq_setResponse(r, i);
 
 	/* On master read wake pending slave writers up */
