@@ -204,9 +204,8 @@ void rq_setResponse(request_t *r, int response)
 }
 
 
-void rq_wakeup(request_t *r, int retval)
+void rq_wakeup(request_t *r)
 {
-	rq_setResponse(r, retval);
 	msgRespond(posixsrv_common.port, &r->msg, r->rid);
 	free(r);
 }
@@ -227,8 +226,10 @@ static void rq_timeoutthr(void *arg)
 				lib_rbRemove(&posixsrv_common.timeout, &r->linkage);
 				if (r->object->operations->timeout != NULL)
 					r->object->operations->timeout(r);
-				else
-					rq_wakeup(r, -ETIME);
+				else {
+					rq_setResponse(r, -ETIME);
+					rq_wakeup(r);
+				}
 				continue;
 			}
 

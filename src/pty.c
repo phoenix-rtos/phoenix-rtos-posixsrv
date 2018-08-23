@@ -108,17 +108,17 @@ static void pty_cancelRequests(pty_t *pty)
 
 	while ((r = pty->write_requests) != NULL) {
 		LIST_REMOVE(&pty->write_requests, r);
-		rq_wakeup(r, r->msg.o.io.err);
+		rq_wakeup(r);
 	}
 
 	while ((r = pty->read_requests) != NULL) {
 		LIST_REMOVE(&pty->read_requests, r);
-		rq_wakeup(r, r->msg.o.io.err);
+		rq_wakeup(r);
 	}
 
 	while ((r = pty->read_master) != NULL) {
 		LIST_REMOVE(&pty->read_master, r);
-		rq_wakeup(r, r->msg.o.io.err);
+		rq_wakeup(r);
 	}
 }
 
@@ -187,9 +187,12 @@ static request_t *_ptm_read(pty_t *pty, request_t *r);
 
 static request_t *_pts_write(pty_t *pty, request_t *r)
 {
-	r->msg.o.io.err = libtty_write(&pty->tty, r->msg.i.data, r->msg.i.size, r->msg.i.io.mode | O_NONBLOCK);
+	int err;
 
-	if (r->msg.o.io.err == -EWOULDBLOCK && !(r->msg.i.io.mode & O_NONBLOCK)) {
+	err = libtty_write(&pty->tty, r->msg.i.data, r->msg.i.size, r->msg.i.io.mode | O_NONBLOCK);
+	rq_setResponse(r, err);
+
+	if (err == -EWOULDBLOCK && !(r->msg.i.io.mode & O_NONBLOCK)) {
 		LIST_ADD(&pty->write_requests, r);
 		r = NULL;
 	}
@@ -220,13 +223,16 @@ static void pts_timeout(request_t *r)
 	LIST_REMOVE(&pty->read_requests, r);
 	mutexUnlock(pty->mutex);
 
-	rq_wakeup(r, r->msg.o.io.err);
+	rq_wakeup(r);
 }
 
 
 static request_t *_pts_read(pty_t *pty, request_t *r)
 {
-	r->msg.o.io.err = libtty_read_nonblock(&pty->tty, r->msg.o.data, r->msg.o.size, r->msg.i.io.mode, &r->pts_read);
+	int err;
+
+	err = libtty_read_nonblock(&pty->tty, r->msg.o.data, r->msg.o.size, r->msg.i.io.mode, &r->pts_read);
+	rq_setResponse(r, err);
 
 	if (r->pts_read.timeout_ms >= 0) {
 		LIST_ADD(&pty->read_requests, r);
@@ -262,16 +268,16 @@ static request_t *pts_open_op(object_t *o, request_t *r)
 
 	mutexLock(pty->mutex);
 	if (pty->state & PTY_CLOSING) {
-		r->msg.o.io.err = -EPIPE;
+		rq_setResponse(r, -EPIPE);
 	}
 	else if (0 && pty->state & (SLAVE_LOCKED | SLAVE_OPEN)) {
-		r->msg.o.io.err = -EACCES;
+		rq_setResponse(r, -EACCES);
 	}
 	else {
 		object_ref(&pty->master);
 		pty->state |= SLAVE_OPEN;
 		/* TODO: Cleanup */
-		r->msg.o.io.err = EOK;
+		rq_setResponse(r, EOK);
 	}
 	mutexUnlock(pty->mutex);
 
@@ -288,11 +294,11 @@ static request_t *pts_close_op(object_t *o, request_t *r)
 	if (pty->state & SLAVE_OPEN) {
 		object_destroy(o);
 		pty_cancelRequests(pty);
-		r->msg.o.io.err = EOK;
+		rq_setResponse(r, EOK);
 		pty->state &= ~SLAVE_OPEN;
 	}
 	else {
-		r->msg.o.io.err = -EACCES;
+		rq_setResponse(r, -EACCES);
 	}
 	mutexUnlock(pty->mutex);
 
@@ -336,7 +342,7 @@ static request_t *ptm_write_op(object_t *o, request_t *r)
 		LIST_REMOVE(&pty->read_requests, reader);
 
 		if ((reader = _pts_read(pty, reader)) != NULL)
-			rq_wakeup(reader, reader->msg.o.io.err);
+			rq_wakeup(reader);
 
 		wake_reader = libtty_poll_status(&pty->tty) & POLLIN;
 	}
@@ -350,7 +356,7 @@ static request_t *ptm_write_op(object_t *o, request_t *r)
 		eventsSend(&event, 1);
 	}
 
-	r->msg.o.io.err = i;
+	rq_setResponse(r, i);
 	return r;
 }
 
@@ -362,13 +368,13 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 	event_t event = {0};
 
 	if (pty->state & PTY_CLOSING) {
-		r->msg.o.io.err = -EBADF;
+		rq_setResponse(r, -EBADF);
 		return r;
 	}
 
 	if (!libtty_txready(&pty->tty)) {
 		if (r->msg.i.io.mode & O_NONBLOCK) {
-			r->msg.o.io.err = -EWOULDBLOCK;
+			rq_setResponse(r, -EWOULDBLOCK);
 			return r;
 		}
 
@@ -379,14 +385,14 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 	for (i = 0; i < r->msg.o.size && libtty_txready(&pty->tty); ++i)
 		((unsigned char *)r->msg.o.data)[i] = libtty_getchar(&pty->tty, &wake_writer);
 
-	r->msg.o.io.err = i;
+	rq_setResponse(r, i);
 
 	/* On master read wake pending slave writers up */
 	if (wake_writer && (writer = pty->write_requests) != NULL) {
 		LIST_REMOVE(&pty->write_requests, writer);
 
 		if ((writer = _pts_write(pty, writer)) != NULL)
-			rq_wakeup(writer, writer->msg.o.io.err);
+			rq_wakeup(writer);
 
 		wake_writer = libtty_poll_status(&pty->tty) & POLLOUT;
 	}
@@ -549,7 +555,7 @@ void ptm_signalReady(void *arg)
 	if ((r = pty->read_master) != NULL) {
 		LIST_REMOVE(&pty->read_master, r);
 		if ((r = _ptm_read(pty, r)) != NULL)
-			rq_wakeup(r, r->msg.o.io.err);
+			rq_wakeup(r);
 	}
 }
 
@@ -603,11 +609,12 @@ static int ptm_create(int *id)
 static request_t *ptmx_open_op(object_t *ptmx, request_t *r)
 {
 	PTY_TRACE("ptmx_open(%d)", object_id(ptmx));
-	int id;
+	int id, err;
 
-	if (!(r->msg.o.io.err = ptm_create(&id)))
-		r->msg.o.io.err = id;
+	err = ptm_create(&id);
 
+	if (!err) err = id;
+	rq_setResponse(r, err);
 	return r;
 }
 

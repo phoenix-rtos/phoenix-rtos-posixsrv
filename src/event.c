@@ -645,7 +645,7 @@ static void queue_wakeup(evqueue_t *queue)
 
 			if ((count = _event_read(queue, events, count))) {
 				LIST_ADD(&filled, r);
-				r->msg.o.io.err = count;
+				rq_setResponse(r, count);
 			}
 			else {
 				LIST_ADD(&empty, r);
@@ -663,7 +663,7 @@ static void queue_wakeup(evqueue_t *queue)
 
 	while ((r = filled) != NULL) {
 		LIST_REMOVE(&filled, r);
-		rq_wakeup(r, r->msg.o.io.err);
+		rq_wakeup(r);
 	}
 }
 
@@ -679,7 +679,8 @@ static request_t *queue_close_op(object_t *o, request_t *r)
 	mutexLock(queue->lock);
 	while ((p = queue->requests) != NULL) {
 		LIST_REMOVE(&queue->requests, p);
-		rq_wakeup(p, -EBADF);
+		rq_setResponse(p, -EBADF);
+		rq_wakeup(p);
 	}
 
 	while (queue->notes != NULL) {
@@ -725,7 +726,7 @@ static request_t *queue_write_op(object_t *o, request_t *r)
 	int evcnt, subcnt, timeout;
 
 	if (queue_unpack(&r->msg, &subs, &subcnt, &events, &evcnt, &timeout) < 0) {
-		r->msg.o.io.err = -EINVAL;
+		rq_setResponse(r, -EINVAL);
 		return r;
 	}
 
@@ -738,7 +739,7 @@ static request_t *queue_write_op(object_t *o, request_t *r)
 		r = NULL;
 	}
 	else {
-		r->msg.o.io.err = count;
+		rq_setResponse(r, count);
 	}
 	mutexUnlock(queue->lock);
 	return r;
@@ -828,7 +829,7 @@ static request_t *sink_write_op(object_t *o, request_t *r)
 	unsigned eventcnt;
 
 	if (r->msg.i.size % sizeof(event_t)) {
-		r->msg.o.io.err = -EINVAL;
+		rq_setResponse(r, -EINVAL);
 		return r;
 	}
 
@@ -836,13 +837,14 @@ static request_t *sink_write_op(object_t *o, request_t *r)
 		events = stackbuf;
 	}
 	else if ((events = malloc(r->msg.i.size)) == NULL) {
-		r->msg.o.io.err = -ENOMEM;
+		rq_setResponse(r, -ENOMEM);
 		return r;
 	}
 
 	eventcnt = r->msg.i.size / sizeof(event_t);
 	memcpy(events, r->msg.i.data, r->msg.i.size);
-	rq_wakeup(r, EOK);
+	rq_setResponse(r, EOK);
+	rq_wakeup(r);
 
 	event_register(events, eventcnt);
 
@@ -858,9 +860,9 @@ static request_t *qmx_open_op(object_t *o, request_t *r)
 	evqueue_t *queue;
 
 	if ((queue = queue_create()) == NULL)
-		r->msg.o.io.err = -ENOMEM;
+		rq_setResponse(r, -ENOMEM);
 	else
-		r->msg.o.io.err = object_id(&queue->object);
+		rq_setResponse(r, object_id(&queue->object));
 
 	return r;
 }

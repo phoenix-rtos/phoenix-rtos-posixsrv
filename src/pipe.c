@@ -150,7 +150,8 @@ static void _pipe_wakeup(pipe_t *p, request_t *r, int retval)
 {
 	PIPE_TRACE("wakeup");
 	LIST_REMOVE(&p->queue, r);
-	rq_wakeup(r, retval);
+	rq_setResponse(r, retval);
+	rq_wakeup(r);
 }
 
 
