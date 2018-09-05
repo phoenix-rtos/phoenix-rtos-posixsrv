@@ -29,7 +29,8 @@
 #include <string.h>
 #include <fcntl.h>
 #include <poll.h>
-#include "posix/idtree.h"
+#include <posix/idtree.h>
+#include <sys/events.h>
 
 #include "posixsrv_private.h"
 
@@ -39,7 +40,7 @@
 
 
 static handler_t pipe_create_op, pipe_write_op, pipe_read_op, pipe_open_op, pipe_close_op, pipe_link_op, pipe_unlink_op;
-static handler_t pipe_getattr_op;
+static handler_t pipe_setattr_op, pipe_getattr_op;
 
 
 static int pipe_lock(handle_t lock, int nonblock)
@@ -62,6 +63,8 @@ typedef struct _pipe_t {
 	int rrefs, wrefs;
 	char full, link;
 
+	unsigned short evmask;
+
 	request_t *queue;
 } pipe_t;
 
@@ -81,6 +84,7 @@ static operations_t pipe_ops = {
 	.link = pipe_link_op,
 	.unlink = pipe_unlink_op,
 	.getattr = pipe_getattr_op,
+	.setattr = pipe_setattr_op,
 	.release = pipe_destroy,
 };
 
@@ -429,7 +433,8 @@ int pipe_close(pipe_t *p, unsigned flags, request_t *r)
 	PIPE_TRACE("close %d/%x %s", object_id(&p->object), flags, flags & O_WRONLY ? "W" : "R");
 
 	while (mutexLock(p->lock) < 0);
-	if (flags & O_WRONLY) {
+
+	if (flags & O_WRONLY || flags & O_RDWR) {
 		if (!p->wrefs) {
 			mutexUnlock(p->lock);
 			return -EINVAL;
@@ -438,11 +443,12 @@ int pipe_close(pipe_t *p, unsigned flags, request_t *r)
 		p->wrefs--;
 
 		if (!p->wrefs) {
-			while (p->queue != NULL)
+			while (p->queue != NULL) {
 				_pipe_wakeup(p, p->queue, 0);
+			}
 		}
 	}
-	else {
+	if (flags & O_RDONLY || flags & O_RDWR) {
 		if (!p->rrefs) {
 			mutexUnlock(p->lock);
 			return -EINVAL;
@@ -524,6 +530,18 @@ static request_t *pipe_unlink_op(object_t *o, request_t *r)
 }
 
 
+static request_t *pipe_setattr_op(object_t *o, request_t *r)
+{
+	pipe_t *p = (pipe_t *)o;
+	if (r->msg.i.attr.type == atEventMask) {
+		r->msg.o.attr.val = p->evmask;;
+		p->evmask = r->msg.i.attr.val;
+	} else {
+		r->msg.o.attr.val = -EINVAL;
+	}
+	return r;
+}
+
 static request_t *pipe_getattr_op(object_t *o, request_t *r)
 {
 	int err = 0;
@@ -534,11 +552,12 @@ static request_t *pipe_getattr_op(object_t *o, request_t *r)
 		mutexLock(p->lock);
 		free = _pipe_free(p);
 		if (free)
-		    err |= POLLOUT;
+			err |= POLLOUT;
 		if (free != PIPE_BUFSZ)
 			err |= POLLIN;
-		mutexUnlock(p->lock);
 		err &= r->msg.i.attr.val;
+		err |= !p->wrefs || !p->rrefs ? POLLHUP : 0;
+		mutexUnlock(p->lock);
 	}
 	else {
 		err = -EINVAL;
