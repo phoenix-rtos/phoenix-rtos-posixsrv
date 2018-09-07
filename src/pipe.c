@@ -434,7 +434,7 @@ int pipe_close(pipe_t *p, unsigned flags, request_t *r)
 
 	while (mutexLock(p->lock) < 0);
 
-	if (flags & O_WRONLY || flags & O_RDWR) {
+	if (flags & O_WRONLY) {
 		if (!p->wrefs) {
 			mutexUnlock(p->lock);
 			return -EINVAL;
@@ -443,12 +443,10 @@ int pipe_close(pipe_t *p, unsigned flags, request_t *r)
 		p->wrefs--;
 
 		if (!p->wrefs) {
-			while (p->queue != NULL) {
+			while (p->queue != NULL)
 				_pipe_wakeup(p, p->queue, 0);
-			}
 		}
-	}
-	if (flags & O_RDONLY || flags & O_RDWR) {
+	} else if (flags & O_RDONLY) {
 		if (!p->rrefs) {
 			mutexUnlock(p->lock);
 			return -EINVAL;
