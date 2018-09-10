@@ -582,6 +582,7 @@ static int ptm_create(int *id)
 	pty->ops.signal_txready = ptm_signalReady;
 
 	pty->evmask = 0;
+	pty->read_master = pty->write_requests = pty->read_requests = NULL;
 
 	mutexCreate(&pty->mutex);
 	condCreate(&pty->cond);
