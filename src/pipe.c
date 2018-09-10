@@ -246,7 +246,7 @@ static int _pipe_read(pipe_t *p, void *buf, size_t sz)
 
 	p->r = (p->r + bytes) % PIPE_BUFSZ;
 
-	if (p->w == p->r)
+	if (bytes)
 		p->full = 0;
 
 	PIPE_TRACE("read %d bytes from %d", bytes, object_id(&p->object));
@@ -255,9 +255,21 @@ static int _pipe_read(pipe_t *p, void *buf, size_t sz)
 }
 
 
+void pipe_event(pipe_t *p, int type)
+{
+	event_t event = { 0 };
+
+	event.oid.port = srv_port();
+	event.oid.id = object_id(&p->object);
+	event.type = type;
+
+	eventsSend(&event, 1);
+}
+
+
 int pipe_write(pipe_t *p, unsigned mode, request_t *r, int *block)
 {
-	int sz = rq_sz(r), bytes = 0, c;
+	int sz = rq_sz(r), bytes = 0, c, was_empty;
 	void *buf = rq_buf(r);
 
 	if (!sz)
@@ -275,6 +287,8 @@ int pipe_write(pipe_t *p, unsigned mode, request_t *r, int *block)
 			bytes += c;
 		}
 
+		was_empty = !p->full && (p->r == p->w);
+
 		/* write to buffer */
 		if (!(bytes += _pipe_write(p, buf + bytes, sz - bytes))) {
 			if (mode & O_NONBLOCK) {
@@ -286,6 +300,9 @@ int pipe_write(pipe_t *p, unsigned mode, request_t *r, int *block)
 				*block = 1;
 				LIST_ADD(&p->queue, r);
 			}
+		}
+		else if (was_empty) {
+			pipe_event(p, evtDataIn);
 		}
 	}
 	else {
@@ -338,6 +355,9 @@ int pipe_read(pipe_t *p, unsigned mode, request_t *r, int *block)
 		/* discharge remaining pending writers */
 		while (p->queue != NULL && (c = _pipe_write(p, rq_buf(p->queue), rq_sz(p->queue))))
 			_pipe_wakeup(p, p->queue, c);
+
+		if (!p->full)
+			pipe_event(p, evtDataOut);
 	}
 
 	if (!bytes && !p->wrefs) {
