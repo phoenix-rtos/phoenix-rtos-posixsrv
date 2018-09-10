@@ -25,6 +25,7 @@
 #include <sys/threads.h>
 #include <sys/list.h>
 #include <sys/mman.h>
+#include <poll.h>
 #include <errno.h>
 #include <string.h>
 #include <fcntl.h>
@@ -40,14 +41,14 @@ static request_t *nothing_op(object_t *o, request_t *r)
 
 static request_t *null_read_op(object_t *o, request_t *r)
 {
-	r->msg.o.io.err = 0;
+	rq_setResponse(r, 0);
 	return r;
 }
 
 
 static request_t *null_write_op(object_t *o, request_t *r)
 {
-	r->msg.o.io.err = r->msg.i.size;
+	rq_setResponse(r, r->msg.i.size);
 	return r;
 }
 
@@ -55,7 +56,35 @@ static request_t *null_write_op(object_t *o, request_t *r)
 static request_t *zero_read_op(object_t *o, request_t *r)
 {
 	memset(r->msg.o.data, 0, r->msg.o.size);
-	r->msg.o.io.err = r->msg.o.size;
+	rq_setResponse(r, r->msg.o.size);
+	return r;
+}
+
+
+static request_t *null_getattr_op(object_t *o, request_t *r)
+{
+	int err;
+
+	if (r->msg.i.attr.type == atPollStatus)
+		err = POLLOUT;
+	else
+		err = -EINVAL;
+
+	rq_setResponse(r, err);
+	return r;
+}
+
+
+static request_t *zero_getattr_op(object_t *o, request_t *r)
+{
+	int err;
+
+	if (r->msg.i.attr.type == atPollStatus)
+		err = POLLIN;
+	else
+		err = -EINVAL;
+
+	rq_setResponse(r, err);
 	return r;
 }
 
@@ -66,6 +95,7 @@ static operations_t null_ops = {
 	.close = nothing_op,
 	.read = null_read_op,
 	.write = null_write_op,
+	.getattr = null_getattr_op,
 	.release = (void *)free,
 };
 
@@ -76,6 +106,7 @@ static operations_t zero_ops = {
 	.close = nothing_op,
 	.read = zero_read_op,
 	.write = null_write_op,
+	.getattr = zero_getattr_op,
 	.release = (void *)free,
 };
 
