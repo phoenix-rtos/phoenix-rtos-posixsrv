@@ -112,9 +112,8 @@ int pipe_avail(object_t *o)
 
 int pipe_create(int type, int *id, unsigned open)
 {
-	pipe_t *p;
-
 	PIPE_TRACE("create");
+	pipe_t *p;
 
 	if ((p = malloc(sizeof(pipe_t))) == NULL)
 		return -ENOMEM;
@@ -168,8 +167,8 @@ static void _pipe_wakeup(pipe_t *p, request_t *r, int retval)
 
 static void pipe_destroy(object_t *o)
 {
-	pipe_t *p = (pipe_t *)o;
 	PIPE_TRACE("destroy");
+	pipe_t *p = (pipe_t *)o;
 
 	while (p->queue != NULL)
 		_pipe_wakeup(p, p->queue, -EPIPE);
@@ -256,7 +255,7 @@ static int _pipe_read(pipe_t *p, void *buf, size_t sz)
 }
 
 
-int pipe_write(pipe_t *p, unsigned mode, request_t *r)
+int pipe_write(pipe_t *p, unsigned mode, request_t *r, int *block)
 {
 	int sz = rq_sz(r), bytes = 0, c;
 	void *buf = rq_buf(r);
@@ -269,7 +268,7 @@ int pipe_write(pipe_t *p, unsigned mode, request_t *r)
 
 	if (p->rrefs) {
 		/* write to pending readers */
-		while (p->queue != NULL && /*!p->full &&*/ bytes < sz) {
+		while (p->queue != NULL && !p->full && bytes < sz) {
 			memcpy(rq_buf(p->queue), buf + bytes, c = min(sz - bytes, rq_sz(p->queue)));
 			PIPE_TRACE("writing %d to pending reader", c);
 			_pipe_wakeup(p, p->queue, c);
@@ -284,6 +283,7 @@ int pipe_write(pipe_t *p, unsigned mode, request_t *r)
 			}
 			else {
 				PIPE_TRACE("write blocked");
+				*block = 1;
 				LIST_ADD(&p->queue, r);
 			}
 		}
@@ -292,22 +292,26 @@ int pipe_write(pipe_t *p, unsigned mode, request_t *r)
 		PIPE_TRACE("write broken pipe");
 		bytes = -EPIPE;
 	}
-
 	mutexUnlock(p->lock);
+
 	return bytes;
 }
 
 
 static request_t *pipe_write_op(object_t *o, request_t *r)
 {
-	if (!(r->msg.o.io.err = pipe_write((pipe_t *)o, r->msg.i.io.mode, r)))
+	int block = 0;
+
+	r->msg.o.io.err = pipe_write((pipe_t *)o, r->msg.i.io.mode, r, &block);
+
+	if (block)
 		return NULL;
 
 	return r;
 }
 
 
-int pipe_read(pipe_t *p, unsigned mode, request_t *r)
+int pipe_read(pipe_t *p, unsigned mode, request_t *r, int *block)
 {
 	int sz = rq_sz(r), bytes = 0, c, was_full;
 	void *buf = rq_buf(r);
@@ -346,6 +350,7 @@ int pipe_read(pipe_t *p, unsigned mode, request_t *r)
 	}
 	else if (!bytes) {
 		PIPE_TRACE("read blocked");
+		*block = 1;
 		LIST_ADD(&p->queue, r);
 	}
 
@@ -356,7 +361,11 @@ int pipe_read(pipe_t *p, unsigned mode, request_t *r)
 
 static request_t *pipe_read_op(object_t *o, request_t *r)
 {
-	if (!(r->msg.o.io.err = pipe_read((pipe_t *)o, r->msg.i.io.mode, r)))
+	int block = 0;
+
+	r->msg.o.io.err = pipe_read((pipe_t *)o, r->msg.i.io.mode, r, &block);
+
+	if (block)
 		return NULL;
 
 	if (r->msg.o.io.err == -EPIPE)
@@ -366,7 +375,7 @@ static request_t *pipe_read_op(object_t *o, request_t *r)
 }
 
 
-int pipe_open(pipe_t *p, unsigned flags, request_t *r)
+int pipe_open(pipe_t *p, unsigned flags, request_t *r, int *block)
 {
 	PIPE_TRACE("open %d/%x %s", object_id(&p->object), flags, flags & O_WRONLY ? "W" : "R");
 
@@ -388,7 +397,8 @@ int pipe_open(pipe_t *p, unsigned flags, request_t *r)
 				PIPE_TRACE("open for writing blocked");
 				LIST_ADD(&p->queue, r);
 				mutexUnlock(p->lock);
-				return 1;
+				*block = 1;
+				return 0;
 			}
 		}
 
@@ -407,7 +417,8 @@ int pipe_open(pipe_t *p, unsigned flags, request_t *r)
 				PIPE_TRACE("open for reading blocked");
 				LIST_ADD(&p->queue, r);
 				mutexUnlock(p->lock);
-				return 1;
+				*block = 1;
+				return 0;
 			}
 		}
 
@@ -421,7 +432,11 @@ int pipe_open(pipe_t *p, unsigned flags, request_t *r)
 
 static request_t *pipe_open_op(object_t *o, request_t *r)
 {
-	if ((r->msg.o.io.err = pipe_open((pipe_t *)o, r->msg.i.openclose.flags/* | O_NONBLOCK*/, r)) == 1)
+	int block = 0;
+
+	r->msg.o.io.err = pipe_open((pipe_t *)o, r->msg.i.openclose.flags/* | O_NONBLOCK*/, r, &block);
+
+	if (block)
 		return NULL;
 
 	return r;
@@ -530,7 +545,9 @@ static request_t *pipe_unlink_op(object_t *o, request_t *r)
 
 static request_t *pipe_setattr_op(object_t *o, request_t *r)
 {
+	PIPE_TRACE("setattr %d", object_id(o));
 	pipe_t *p = (pipe_t *)o;
+
 	if (r->msg.i.attr.type == atEventMask) {
 		r->msg.o.attr.val = p->evmask;;
 		p->evmask = r->msg.i.attr.val;
@@ -542,6 +559,7 @@ static request_t *pipe_setattr_op(object_t *o, request_t *r)
 
 static request_t *pipe_getattr_op(object_t *o, request_t *r)
 {
+	PIPE_TRACE("getattr %d", object_id(o));
 	int err = 0;
 	pipe_t *p = (pipe_t *)o;
 	int free;

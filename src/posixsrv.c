@@ -148,8 +148,8 @@ int object_create(object_t *o, operations_t *ops)
 
 int object_link(object_t *o, char *path)
 {
-	oid_t oid;
 	TRACE("linking %d to %s", o->linkage.id, path);
+	oid_t oid;
 
 	oid.port = posixsrv_common.port;
 	oid.id = o->linkage.id;
@@ -210,6 +210,7 @@ void rq_setResponse(request_t *r, int response)
 
 void rq_wakeup(request_t *r)
 {
+	TRACE("respond %x", r->rid);
 	msgRespond(posixsrv_common.port, &r->msg, r->rid);
 	free(r);
 }

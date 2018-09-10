@@ -129,9 +129,6 @@ extern int pipe_init(void);
 extern int pipe_free(object_t *o);
 
 
-extern int pipe_open(struct _pipe_t *p, unsigned flags, request_t *r);
-
-
 extern int pipe_avail(object_t *o);
 
 
