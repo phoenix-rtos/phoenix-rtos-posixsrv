@@ -211,7 +211,7 @@ void rq_setResponse(request_t *r, int response)
 void rq_wakeup(request_t *r)
 {
 	TRACE("respond %x", r->rid);
-	msgRespond(posixsrv_common.port, &r->msg, r->rid);
+	msgRespond(r->port, &r->msg, r->rid);
 	free(r);
 }
 
@@ -309,27 +309,30 @@ int rq_id(request_t *r)
 void posixsrvthr(void *arg)
 {
 	object_t *o;
+	unsigned port = (unsigned)arg;
 	request_t *r = NULL;
 
 	for (;;) {
-		if (r == NULL)
+		if (r == NULL) {
 			r = malloc(sizeof(*r));
+			r->port = port;
+		}
 
-		if (msgRecv(posixsrv_common.port, &r->msg, &r->rid) < 0)
+		if (msgRecv(port, &r->msg, &r->rid) < 0)
 			continue;
 
 		if ((o = object_get(rq_id(r))) == NULL || o->operations->handlers[r->msg.type] == NULL) {
 			if (o != NULL)
 				object_put(o);
 			r->msg.o.io.err = -EINVAL;
-			msgRespond(posixsrv_common.port, &r->msg, r->rid);
+			msgRespond(port, &r->msg, r->rid);
 			continue;
 		}
 
 		r->object = o;
 
 		if ((r = o->operations->handlers[r->msg.type](o, r)) != NULL)
-			msgRespond(posixsrv_common.port, &r->msg, r->rid);
+			msgRespond(port, &r->msg, r->rid);
 
 		object_put(o);
 	}
@@ -340,6 +343,7 @@ int main(int argc, char **argv)
 {
 	oid_t fs;
 	int i;
+	int events_port;
 
 	idtree_init(&posixsrv_common.objects);
 	lib_rbInit(&posixsrv_common.timeout, rq_cmp, NULL);
@@ -358,7 +362,7 @@ int main(int argc, char **argv)
 	if (special_init() < 0)
 		fail("special init");
 
-	if (event_init() < 0)
+	if ((events_port = event_init()) < 0)
 		fail("event init");
 
 	if (pipe_init() < 0)
@@ -367,8 +371,10 @@ int main(int argc, char **argv)
 	if (pty_init() < 0)
 		fail("pty init");
 
-	for (i = 0; i < sizeof(posixsrv_common.stacks) / sizeof(posixsrv_common.stacks[0]); ++i)
-		beginthread(posixsrvthr, 4, posixsrv_common.stacks[i], sizeof(posixsrv_common.stacks[i]), NULL);
+	beginthread(posixsrvthr, 4, posixsrv_common.stacks[0], sizeof(posixsrv_common.stacks[0]), (void *)events_port);
+
+	for (i = 1; i < sizeof(posixsrv_common.stacks) / sizeof(posixsrv_common.stacks[0]); ++i)
+		beginthread(posixsrvthr, 4, posixsrv_common.stacks[i], sizeof(posixsrv_common.stacks[i]), (void *)posixsrv_common.port);
 
 
 	rq_timeoutthr(NULL);

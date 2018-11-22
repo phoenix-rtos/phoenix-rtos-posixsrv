@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <poll.h>
+#include <signal.h>
 
 #include <libtty.h>
 
@@ -92,6 +93,7 @@ typedef struct {
 	libtty_callbacks_t ops;
 	unsigned state;
 	unsigned short evmask;
+	pid_t slave_pid;
 
 	request_t *read_master;
 
@@ -276,6 +278,7 @@ static request_t *pts_open_op(object_t *o, request_t *r)
 	else {
 		object_ref(&pty->master);
 		pty->state |= SLAVE_OPEN;
+		pty->slave_pid = r->msg.pid;
 		/* TODO: Cleanup */
 		rq_setResponse(r, EOK);
 	}
@@ -434,6 +437,8 @@ static request_t *ptm_close_op(object_t *o, request_t *r)
 	object_destroy(&pty->slave);
 	pty_cancelRequests(pty);
 	object_put(&pty->slave);
+
+	killpg(pty->slave_pid, SIGHUP);
 	object_destroy(o);
 	return r;
 }

@@ -26,6 +26,7 @@
 typedef struct request_t {
 	struct request_t *next, *prev;
 	rbnode_t linkage;
+	unsigned port;
 
 	struct _object_t *object;
 	time_t wakeup;

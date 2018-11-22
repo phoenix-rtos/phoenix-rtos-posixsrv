@@ -115,6 +115,7 @@ static struct {
 	object_t qmx;
 	handle_t lock;
 	rbtree_t notes;
+	unsigned port;
 } event_common;
 
 
@@ -812,7 +813,7 @@ static request_t *sink_create_op(object_t *o, request_t *r)
 	}
 	else {
 		r->msg.o.create.err = EOK;
-		r->msg.o.create.oid.port = srv_port();
+		r->msg.o.create.oid.port = event_common.port;
 		r->msg.o.create.oid.id = object_id(&queue->object);
 	}
 
@@ -868,10 +869,24 @@ static request_t *qmx_open_op(object_t *o, request_t *r)
 }
 
 
+static int event_object_link(object_t *o, char *path)
+{
+	TRACE("linking %d to %s", o->linkage.id, path);
+	oid_t oid;
+
+	oid.port = event_common.port;
+	oid.id = o->linkage.id;
+
+	return create_dev(&oid, path);
+}
+
+
 int event_init(void)
 {
 	if (mutexCreate(&event_common.lock) < 0)
 		return -ENOMEM;
+
+	portCreate(&event_common.port);
 
 	lib_rbInit(&event_common.notes, event_cmp, NULL);
 	object_create(&event_common.sink, &sink_ops);
@@ -879,8 +894,8 @@ int event_init(void)
 
 	mkdir("/dev/event", 0555);
 
-	object_link(&event_common.sink, "/dev/event/sink");
-	object_link(&event_common.qmx, "/dev/event/queue");
+	event_object_link(&event_common.sink, "/dev/event/sink");
+	event_object_link(&event_common.qmx, "/dev/event/queue");
 
-	return EOK;
+	return event_common.port;
 }
