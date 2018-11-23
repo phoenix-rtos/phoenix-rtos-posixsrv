@@ -438,7 +438,7 @@ static request_t *ptm_close_op(object_t *o, request_t *r)
 	pty_cancelRequests(pty);
 	object_put(&pty->slave);
 
-	killpg(pty->slave_pid, SIGHUP);
+	kill(pty->slave_pid, SIGHUP);
 	object_destroy(o);
 	return r;
 }
