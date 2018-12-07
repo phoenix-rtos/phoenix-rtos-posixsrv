@@ -277,6 +277,7 @@ static request_t *pts_open_op(object_t *o, request_t *r)
 	}
 	else {
 		object_ref(&pty->master);
+		object_ref(&pty->slave);
 		pty->state |= SLAVE_OPEN;
 		pty->slave_pid = r->msg.pid;
 		/* TODO: Cleanup */
@@ -295,12 +296,14 @@ static request_t *pts_close_op(object_t *o, request_t *r)
 
 	mutexLock(pty->mutex);
 	if (pty->state & SLAVE_OPEN) {
-		object_destroy(o);
-		pty_cancelRequests(pty);
+		object_put(o);
+		if (!o->refs) {
+			object_destroy(o);
+			pty_cancelRequests(pty);
+			pty->state &= ~SLAVE_OPEN;
+		}
 		rq_setResponse(r, EOK);
-		pty->state &= ~SLAVE_OPEN;
-	}
-	else {
+	} else {
 		rq_setResponse(r, -EACCES);
 	}
 	mutexUnlock(pty->mutex);
