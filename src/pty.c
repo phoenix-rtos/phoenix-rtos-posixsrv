@@ -51,7 +51,6 @@ static handler_t ptm_write_op, ptm_read_op, ptm_close_op, ptm_devctl_op, ptm_get
 static handler_t ptmx_open_op;
 
 static void ptm_destroy(object_t *o);
-static void pts_destroy(object_t *o);
 
 static void pts_timeout(request_t *r);
 
@@ -64,7 +63,7 @@ static operations_t pts_ops = {
 	.getattr = pts_getattr_op,
 	.setattr = pts_setattr_op,
 	.devctl = pts_devctl_op,
-	.release = pts_destroy,
+	.release = NULL,
 	.timeout = pts_timeout,
 };
 
@@ -94,6 +93,7 @@ typedef struct {
 	unsigned state;
 	unsigned short evmask;
 	pid_t slave_pid;
+	int slave_refs;
 
 	request_t *read_master;
 
@@ -137,17 +137,6 @@ static inline pty_t *pty_slave(object_t *slave)
 }
 
 
-static void pts_destroy(object_t *o)
-{
-	PTY_TRACE("destroying slave (%d)", object_id(o));
-	pty_t *pty = pty_slave(o);
-
-	mutexLock(pty->mutex);
-	object_put(&pty->master);
-	mutexUnlock(pty->mutex);
-}
-
-
 static void ptm_destroy(object_t *o)
 {
 	PTY_TRACE("destroying master %d", object_id(o));
@@ -173,7 +162,6 @@ static void ptm_destroy(object_t *o)
 
 	mutexLock(pty->mutex);
 	pty->state |= PTY_CLOSING;
-
 	mutexUnlock(pty->mutex);
 
 	libtty_destroy(&pty->tty);
@@ -272,15 +260,13 @@ static request_t *pts_open_op(object_t *o, request_t *r)
 	if (pty->state & PTY_CLOSING) {
 		rq_setResponse(r, -EPIPE);
 	}
-	else if (0 && pty->state & (SLAVE_LOCKED | SLAVE_OPEN)) {
+	else if (pty->state & SLAVE_LOCKED) {
 		rq_setResponse(r, -EACCES);
 	}
 	else {
-		object_ref(&pty->master);
-		object_ref(&pty->slave);
 		pty->state |= SLAVE_OPEN;
-		pty->slave_pid = r->msg.pid;
-		/* TODO: Cleanup */
+		pty->slave_refs++;
+		pty->slave_pid = r->msg.pid; /* FIXME */
 		rq_setResponse(r, EOK);
 	}
 	mutexUnlock(pty->mutex);
@@ -296,11 +282,9 @@ static request_t *pts_close_op(object_t *o, request_t *r)
 
 	mutexLock(pty->mutex);
 	if (pty->state & SLAVE_OPEN) {
-		object_put(o);
-		if (!o->refs) {
-			object_destroy(o);
-			pty_cancelRequests(pty);
+		if (!--pty->slave_refs) {
 			pty->state &= ~SLAVE_OPEN;
+			pty_cancelRequests(pty);
 		}
 		rq_setResponse(r, EOK);
 	} else {
@@ -441,8 +425,14 @@ static request_t *ptm_close_op(object_t *o, request_t *r)
 	pty_cancelRequests(pty);
 	object_put(&pty->slave);
 
-	kill(pty->slave_pid, SIGHUP);
+	if (pty->state & SLAVE_OPEN)
+		kill(pty->slave_pid, SIGHUP);
+
 	object_destroy(o);
+
+	PTY_TRACE("ptm_close(%d): %d slave refs, %d slave object refs, %d master object refs", object_id(o), pty->slave_refs,
+		pty->slave.refs, pty->master.refs);
+
 	return r;
 }
 
@@ -601,6 +591,7 @@ static int ptm_create(int *id)
 	}
 
 	pty->state = MASTER_OPEN | SLAVE_LOCKED;
+	pty->slave_refs = 0;
 
 	object_create(&pty->master, &ptm_ops);
 	object_create(&pty->slave, &pts_ops);
