@@ -65,7 +65,6 @@ static request_t *random_read_op(object_t *o, request_t *r)
 {
 	int len = r->msg.o.size;
 	uint8_t* buf = r->msg.o.data;
-	srand(time(NULL));
 
 	while (len >= 4) {
 		*((int*)buf) = rand();
@@ -165,6 +164,7 @@ int special_init()
 	if ((o = malloc(sizeof(*o))) == NULL)
 		return -ENOMEM;
 
+	srand(time(NULL));
 	object_create(o, &random_ops);
 	err = object_link(o, "/dev/urandom");
 	object_put(o);
