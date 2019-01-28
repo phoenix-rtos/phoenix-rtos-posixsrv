@@ -142,4 +142,7 @@ extern int special_init(void);
 extern int event_init(void);
 
 
+extern int tmpfile_init(void);
+
+
 #endif
