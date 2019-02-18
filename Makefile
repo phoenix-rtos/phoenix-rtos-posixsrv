@@ -1,7 +1,7 @@
 #
-# Makefile for phoenix-rtos-posixsrv
+# Makefile for phoenix-rtos-usb
 #
-# Copyright 2018 Phoenix Systems
+# Copyright 2019 Phoenix Systems
 #
 # %LICENSE%
 #
@@ -11,71 +11,75 @@ MAKEFLAGS += --no-print-directory
 
 #TARGET ?= ia32-qemu
 #TARGET ?= armv7-stm32
-TARGET ?= arm-imx
+TARGET ?= arm-imx6ull
 
-# Compliation options for various architectures
-TARGET_FAMILY = $(firstword $(subst -, ,$(TARGET)-))
-include Makefile.$(TARGET_FAMILY)
-
-### output target and sources ###
-PROG := posixsrv
-SRCS := $(wildcard src/*.c)
-LDLIBS := -ltty $(LDLIBS)
-
-### build/install dirs ###
+TOPDIR := $(CURDIR)
 BUILD_PREFIX ?= ../build/$(TARGET)
 BUILD_PREFIX := $(abspath $(BUILD_PREFIX))
 BUILD_DIR ?= $(BUILD_PREFIX)/$(notdir $(TOPDIR))
 BUILD_DIR := $(abspath $(BUILD_DIR))
 
-PREFIX_O := $(BUILD_DIR)/$(PROG)/
+# Compliation options for various architectures
+TARGET_FAMILY = $(firstword $(subst -, ,$(TARGET)-))
+include Makefile.$(TARGET_FAMILY)
+
+# build artifacts dir
+CURR_SUFFIX := $(patsubst $(TOPDIR)/%,%,$(abspath $(CURDIR))/)
+PREFIX_O := $(BUILD_DIR)/$(CURR_SUFFIX)
+
+# target install paths, can be provided exterally
 PREFIX_A ?= $(BUILD_PREFIX)/lib/
 PREFIX_H ?= $(BUILD_PREFIX)/include/
 PREFIX_PROG ?= $(BUILD_PREFIX)/prog/
 PREFIX_PROG_STRIPPED ?= $(BUILD_PREFIX)/prog.stripped/
 
-# setup paths
-CFLAGS += -I$(PREFIX_H)
-LDFLAGS += -L$(PREFIX_A)
+CFLAGS += -I"$(PREFIX_H)"
+LDFLAGS += -L"$(PREFIX_A)"
 
-### intermediate targets ###
-PROG_OBJS += $(patsubst %,$(PREFIX_O)%,$(SRCS:.c=.o))
-PROG_UNSTRIPPED := $(patsubst %,$(PREFIX_PROG)%,$(PROG))
-PROG_STRIPPED   := $(patsubst %,$(PREFIX_PROG_STRIPPED)%,$(PROG))
+# add include path for auto-generated files
+CFLAGS += -I"$(BUILD_DIR)/$(CURR_SUFFIX)"
 
-# try to resolve static libs to provice correct rebuild dependencies
-PSMK_LDPATH := $(subst ",,$(patsubst -L%,%,$(filter -L%,$(LDFLAGS)))) $(shell $(CC) $(CFLAGS) -print-search-dirs |grep "libraries: " |tr : " ")
-PSMK_RESOLVED_LDLIBS := $(filter-out -l%,$(LDLIBS)) $(foreach lib,$(patsubst -l%,lib%.a,$(LDLIBS)),$(foreach ldpath,$(PSMK_LDPATH),$(wildcard $(ldpath)/$(lib))))
+ARCH =  $(SIL)@mkdir -p $(@D); \
+	(printf "AR  %-24s\n" "$(@F)"); \
+	$(AR) $(ARFLAGS) $@ $^ 2>/dev/null
 
-# generic rules
+LINK = $(SIL)mkdir -p $(@D); \
+	(printf "LD  %-24s\n" "$(@F)"); \
+	$(LD) $(LDFLAGS) -o "$@"  $^ $(LDLIBS)
+	
+HEADER = $(SIL)mkdir -p $(@D); \
+	(printf "HEADER %-24s\n" "$<"); \
+	cp -pR "$<" "$@"
+
 $(PREFIX_O)%.o: %.c
 	@mkdir -p $(@D)
-	$(SIL)(printf " CC  %-24s\n" "$<")
+	$(SIL)(printf "CC  %-24s\n" "$<")
 	$(SIL)$(CC) -c $(CFLAGS) "$<" -o "$@"
 	$(SIL)$(CC) -M  -MD -MP -MF $(PREFIX_O)$*.c.d -MT "$@" $(CFLAGS) $<
 
-
-$(PROG_UNSTRIPPED): $(PROG_OBJS) $(PSMK_RESOLVED_LDLIBS)
+$(PREFIX_O)%.o: %.S
 	@mkdir -p $(@D)
-	@(printf " LD  %-24s\n" "$(@F)")
-	$(SIL)$(LD) $(LDFLAGS) -o "$@" $(PROG_OBJS) $(LDLIBS)
-
-$(PROG_STRIPPED): $(PROG_UNSTRIPPED)
+	$(SIL)(printf "ASM %s/%-24s\n" "$(notdir $(@D))" "$<")
+	$(SIL)$(CC) -c $(CFLAGS) "$<" -o "$@"
+	$(SIL)$(CC) -M  -MD -MP -MF $(PREFIX_O)$*.S.d -MT "$@" $(CFLAGS) $<
+	
+$(PREFIX_PROG_STRIPPED)%: $(PREFIX_PROG)%
 	@mkdir -p $(@D)
-	@(printf " STR %-24s  \n" "$(@F)")
-	$(SIL)$(STRIP) -s -o "$@" "$<"
+	@(printf "STR %-24s\n" "$(@F)")
+	$(SIL)$(STRIP) -o $@ $<
+	
+#include Makefile.$(TARGET)
 
+all: $(PREFIX_PROG_STRIPPED)posixsrv
+#$(PREFIX_A)libusb.a $(addprefix $(PREFIX_H), libusb.h usb.h usbd.h usb_cdc.h)
 
-### default target ###
-# suppress 'nothing to be done'
-all: $(PROG_UNSTRIPPED) $(PROG_STRIPPED) $(PROG_OBJS)
-	@echo > /dev/null;
-
+$(PREFIX_PROG)posixsrv: $(addprefix $(PREFIX_O), event.o pipe.o pty.o special.o posixsrv.o)
+	$(LINK) $(PREFIX_A)libtty.a
+	
+.PHONY: clean
 clean:
-	$(SIL)rm -rf build*
+	@echo "rm -rf $(BUILD_DIR)"
 
-# include file dependencies
-ALL_D := $(wildcard $(PREFIX_O)*.d)
--include $(ALL_D)
-
-.PHONY: all clean
+ifneq ($(filter clean,$(MAKECMDGOALS)),)
+	$(shell rm -rf $(BUILD_DIR))
+endif
