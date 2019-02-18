@@ -1,5 +1,5 @@
 #
-# Makefile for Phoenix-RTOS 3 device drivers
+# Makefile for phoenix-rtos-usb
 #
 # ARM (Cortex-A5/A7/A9) options
 #
@@ -7,6 +7,11 @@
 #
 
 CROSS ?= arm-phoenix-
+
+SUBDIRS = tty/libtty tty/imx6ull-uart storage/imx6ull-flash gpio/imx6ull-gpio utils/imx6ull-nandtool dma/imx6ull-sdma spi/imx6ull-ecspi utils/imx6ull-otp usb/imx6ull-ehci usb/telit-le910
+
+MKDEP = $(CROSS)gcc -MM
+MKDEPFLAGS = $(CFLAGS)
 
 CC = $(CROSS)gcc
 
@@ -16,13 +21,15 @@ CFLAGS += -Os -Wall -Wstrict-prototypes -g\
 
 CFLAGS += -fdata-sections -ffunction-sections
 
-LD = $(CROSS)ld
-LDFLAGS += -z max-page-size=0x1000
-LDFLAGS += --gc-sections
+AR = $(CROSS)ar
+ARFLAGS = -r
 
+LD = $(CROSS)ld
+LDFLAGS = -z max-page-size=0x1000
+LDFLAGS += --gc-sections
 GCCLIB := $(shell $(CC) $(CFLAGS) -print-libgcc-file-name)
 PHOENIXLIB := $(shell $(CC) $(CFLAGS) -print-file-name=libphoenix.a)
-LDLIBS += $(PHOENIXLIB) $(GCCLIB)
+LDLIBS := $(PHOENIXLIB) $(GCCLIB)
 
 OBJCOPY = $(CROSS)objcopy
 OBJDUMP = $(CROSS)objdump

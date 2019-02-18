@@ -7,15 +7,26 @@
 #
 
 CROSS ?= i386-pc-phoenix-
+
+SUBDIRS = tty/libtty tty/pc-tty tty/pc-uart storage/pc-ata
+
+MKDEP = $(CROSS)gcc -MM
+MKDEPFLAGS = $(CFLAGS)
+
 CC = $(CROSS)gcc
-CFLAGS += -O2 -g -Wall -Wstrict-prototypes -fomit-frame-pointer -fno-strength-reduce
+
+CFLAGS += -O2 -g -Wall -Wstrict-prototypes -nostartfiles -nostdlib\
+	-m32 -mtune=generic -mno-mmx -mno-sse -fno-pic -fno-pie\
+	-fomit-frame-pointer -fno-strength-reduce
+
+AR = $(CROSS)ar
+ARFLAGS = -r
 
 LD = $(CROSS)ld
-#LDFLAGS = -m elf_i386
-
+LDFLAGS = -m elf_i386
 GCCLIB := $(shell $(CC) $(CFLAGS) -print-libgcc-file-name)
 PHOENIXLIB := $(shell $(CC) $(CFLAGS) -print-file-name=libphoenix.a)
-LDLIBS += $(PHOENIXLIB) $(GCCLIB)
+LDLIBS := $(PHOENIXLIB) $(GCCLIB)
 
 OBJCOPY = $(CROSS)objcopy
 OBJDUMP = $(CROSS)objdump

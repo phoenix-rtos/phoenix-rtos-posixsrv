@@ -45,7 +45,7 @@ ARCH =  $(SIL)@mkdir -p $(@D); \
 
 LINK = $(SIL)mkdir -p $(@D); \
 	(printf "LD  %-24s\n" "$(@F)"); \
-	$(LD) $(LDFLAGS) -o "$@"  $^ $(LDLIBS)
+	$(LD) $(LDFLAGS) -o "$@"  $^ $(PREFIX_A)libtty.a $(LDLIBS)
 	
 HEADER = $(SIL)mkdir -p $(@D); \
 	(printf "HEADER %-24s\n" "$<"); \
@@ -68,13 +68,10 @@ $(PREFIX_PROG_STRIPPED)%: $(PREFIX_PROG)%
 	@(printf "STR %-24s\n" "$(@F)")
 	$(SIL)$(STRIP) -o $@ $<
 	
-#include Makefile.$(TARGET)
-
 all: $(PREFIX_PROG_STRIPPED)posixsrv
-#$(PREFIX_A)libusb.a $(addprefix $(PREFIX_H), libusb.h usb.h usbd.h usb_cdc.h)
 
-$(PREFIX_PROG)posixsrv: $(addprefix $(PREFIX_O), event.o pipe.o pty.o special.o posixsrv.o)
-	$(LINK) $(PREFIX_A)libtty.a
+$(PREFIX_PROG)posixsrv: $(addprefix $(PREFIX_O), event.o pipe.o pty.o special.o tmpfile.o posixsrv.o)
+	$(LINK)
 	
 .PHONY: clean
 clean:
