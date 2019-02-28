@@ -425,9 +425,7 @@ static request_t *ptm_close_op(object_t *o, request_t *r)
 	pty_cancelRequests(pty);
 	object_put(&pty->slave);
 
-	if (pty->state & SLAVE_OPEN)
-		kill(pty->slave_pid, SIGHUP);
-
+	libtty_signal_pgrp(&pty->tty, SIGHUP);
 	object_destroy(o);
 
 	PTY_TRACE("ptm_close(%d): %d slave refs, %d slave object refs, %d master object refs", object_id(o), pty->slave_refs,
