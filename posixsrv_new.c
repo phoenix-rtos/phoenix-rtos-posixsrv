@@ -331,8 +331,8 @@ static int posix_genericOpen(file_t *file)
 	msg.i.size = msg.o.size = 0;
 
 	msg.type = mtOpen;
-	msg.openclose.oid = file->oid;
-	msg.openclose.flags = 0; /* FIXME: field not necessary? */
+	msg.i.openclose.oid = file->oid;
+	msg.i.openclose.flags = 0; /* FIXME: field not necessary? */
 
 	if (msgSend(file->oid.port, &msg) < 0)
 		return EIO;
@@ -353,8 +353,8 @@ static int posix_genericClose(file_t *file)
 	msg.i.size = msg.o.size = 0;
 
 	msg.type = mtClose;
-	msg.openclose.oid = file->oid;
-	msg.openclose.flags = 0; /* FIXME: field not necessary? */
+	msg.i.openclose.oid = file->oid;
+	msg.i.openclose.flags = 0; /* FIXME: field not necessary? */
 
 	if (msgSend(file->oid.port, &msg) < 0)
 		return EIO;
@@ -378,9 +378,9 @@ static int posix_genericWrite(file_t *file, void *data, size_t size, ssize_t *re
 	msg.o.size = 0;
 
 	msg.type = mtWrite;
-	msg.io.oid = file->oid;
-	msg.io.offs = file->offset;
-	msg.io.mode = 0; /* FIXME: field not necessary? */
+	msg.i.io.oid = file->oid;
+	msg.i.io.offs = file->offset;
+	msg.i.io.mode = 0; /* FIXME: field not necessary? */
 
 	if (msgSend(file->oid.port, &msg) < 0)
 		return EIO;
@@ -404,9 +404,9 @@ static int posix_genericRead(file_t *file, void *data, size_t size, ssize_t *ret
 	msg.o.size = 0;
 
 	msg.type = mtRead;
-	msg.io.oid = file->oid;
-	msg.io.offs = file->offset;
-	msg.io.mode = 0; /* FIXME: field not necessary? */
+	msg.i.io.oid = file->oid;
+	msg.i.io.offs = file->offset;
+	msg.i.io.mode = 0; /* FIXME: field not necessary? */
 
 	if (msgSend(file->oid.port, &msg) < 0)
 		return EIO;
