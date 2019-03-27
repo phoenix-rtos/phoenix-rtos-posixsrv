@@ -9,14 +9,20 @@ typedef struct _file_ops_t file_ops_t;
 
 
 typedef struct {
+	idnode_t linkage;
+	const file_ops_t *ops;
+} node_t;
+
+
+typedef struct {
 	unsigned refs;
 	off_t offset;
 	handle_t lock;
 	mode_t mode;
 	unsigned status;
-	file_ops_t *ops;
+	const file_ops_t *ops;
 	oid_t oid;
-	void *data;
+	node_t *node;
 } file_t;
 
 
@@ -39,6 +45,8 @@ typedef struct {
 	uid_t euid;
 	gid_t gid;
 	gid_t egid;
+
+	oid_t cwd;
 
 	unsigned fdcount;
 	fildes_t *fds;
@@ -68,7 +76,6 @@ typedef struct {
 	unsigned *rid;
 	msg_t *msg;
 } pool_t;
-
 
 
 #endif

@@ -29,6 +29,11 @@ struct {
 	handle_t lock;
 	pid_t nextpid;
 	idtree_t processes;
+	idtree_t nodes;
+	unsigned port;
+
+	node_t zero;
+	node_t null;
 
 	long long stacks[4][0x400];
 } posixsrv_common;
@@ -107,6 +112,123 @@ static void process_put(process_t *p)
 }
 
 
+/* Generic operations for files */
+
+static int generic_open(file_t *file)
+{
+	msg_t msg;
+
+	msg.i.data = msg.o.data = NULL;
+	msg.i.size = msg.o.size = 0;
+
+	msg.type = mtOpen;
+	msg.i.openclose.oid = file->oid;
+	msg.i.openclose.flags = 0; /* FIXME: field not necessary? */
+
+	if (msgSend(file->oid.port, &msg) < 0)
+		return EIO;
+
+	/* FIXME: agree on sign convention and meaning? */
+	if (msg.o.io.err)
+		return EIO;
+
+	return EOK;
+}
+
+
+static int generic_close(file_t *file)
+{
+	msg_t msg;
+
+	msg.i.data = msg.o.data = NULL;
+	msg.i.size = msg.o.size = 0;
+
+	msg.type = mtClose;
+	msg.i.openclose.oid = file->oid;
+	msg.i.openclose.flags = 0; /* FIXME: field not necessary? */
+
+	if (msgSend(file->oid.port, &msg) < 0)
+		return EIO;
+
+	/* FIXME: agree on sign convention and meaning? */
+	if (msg.o.io.err)
+		return EIO;
+
+	return EOK;
+}
+
+
+static int generic_write(file_t *file, ssize_t *retval, void *data, size_t size)
+{
+	msg_t msg;
+
+	msg.i.data = data;
+	msg.i.size = size;
+
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	msg.type = mtWrite;
+	msg.i.io.oid = file->oid;
+	msg.i.io.offs = file->offset;
+	msg.i.io.mode = 0; /* FIXME: field not necessary? */
+
+	if (msgSend(file->oid.port, &msg) < 0)
+		return EIO;
+
+	/* FIXME: agree on sign convention and meaning? */
+	if (msg.o.io.err)
+		return EIO;
+
+	return EOK;
+}
+
+
+static int generic_read(file_t *file, ssize_t *retval, void *data, size_t size)
+{
+	msg_t msg;
+
+	msg.i.data = data;
+	msg.i.size = size;
+
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	msg.type = mtRead;
+	msg.i.io.oid = file->oid;
+	msg.i.io.offs = file->offset;
+	msg.i.io.mode = 0; /* FIXME: field not necessary? */
+
+	if (msgSend(file->oid.port, &msg) < 0)
+		return EIO;
+
+	/* FIXME: agree on sign convention and meaning? */
+	if (msg.o.io.err)
+		return EIO;
+
+	return EOK;
+}
+
+
+const static file_ops_t generic_ops = {
+	.open = generic_open,
+	.close = generic_close,
+	.read = generic_read,
+	.write = generic_write
+};
+
+
+/* Internal files */
+
+node_t *posixsrv_node(oid_t *oid)
+{
+	if (oid->port != posixsrv_common.port)
+		return NULL;
+
+	return lib_treeof(node_t, linkage, idtree_find(&posixsrv_common.nodes, oid->id));
+}
+
+
 /* File functions */
 
 static void file_lock(file_t *f)
@@ -139,21 +261,24 @@ static int fd_alloc(process_t *p, int fd)
 }
 
 
-static int file_new(process_t *p, int fd)
+static int file_new(process_t *p, oid_t *oid, int *fd)
 {
 	file_t *f;
 
-	if ((fd = fd_alloc(p, fd)) < 0)
-		return -ENFILE;
+	if ((*fd = fd_alloc(p, *fd)) < 0)
+		return ENFILE;
 
-	if ((f = p->fds[fd].file = malloc(sizeof(file_t))) == NULL)
-		return -ENOMEM;
+	if ((f = p->fds[*fd].file = malloc(sizeof(file_t))) == NULL)
+		return ENOMEM;
 
 	memset(f, 0, sizeof(file_t));
 	mutexCreate(&f->lock);
 	f->refs = 1;
 	f->offset = 0;
-	return fd;
+	f->mode = 0;
+	f->status = 0;
+
+	return EOK;
 }
 
 
@@ -194,9 +319,79 @@ static file_t *file_get(process_t *p, int fd)
 }
 
 
+#define POSIX_RET(val, err) return *retval = val, err
+
+/* /dev/zero */
+
+static int zero_open(file_t *file)
+{
+	return EOK;
+}
+
+
+static int zero_close(file_t *file)
+{
+	return EOK;
+}
+
+
+static int zero_write(file_t *file, ssize_t *retval, void *data, size_t size)
+{
+	POSIX_RET(size, EOK);
+}
+
+
+static int zero_read(file_t *file, ssize_t *retval, void *data, size_t size)
+{
+	memset(data, 0, size);
+	POSIX_RET(size, EOK);
+}
+
+
+static const file_ops_t zero_ops = {
+	.open = zero_open,
+	.close = zero_close,
+	.read = zero_read,
+	.write = zero_write
+};
+
+
+/* /dev/null */
+
+static int null_open(file_t *file)
+{
+	return EOK;
+}
+
+
+static int null_close(file_t *file)
+{
+	return EOK;
+}
+
+
+static int null_write(file_t *file, ssize_t *retval, void *data, size_t size)
+{
+	POSIX_RET(size, EOK);
+}
+
+
+static int null_read(file_t *file, ssize_t *retval, void *data, size_t size)
+{
+	POSIX_RET(0, EOK);
+}
+
+
+static const file_ops_t null_ops = {
+	.open = null_open,
+	.close = null_close,
+	.read = null_read,
+	.write = null_write
+};
+
+
 /* File operation wrappers */
 
-#define POSIX_RET(val, err) return *retval = val, err
 
 static int posix_write(process_t *p, int fd, void *buf, size_t nbyte, ssize_t *retval)
 {
@@ -225,23 +420,40 @@ static int posix_read(process_t *p, int fd, void *buf, size_t nbyte, ssize_t *re
 }
 
 
-static int posix_open(process_t *p, char *path, int oflag, mode_t mode, ssize_t *retval)
+static int posix_open(process_t *p, char *path, int oflag, mode_t mode, int *retval)
 {
-#if 0
 	oid_t oid;
-	resolve_path(path, &oid);
+	int errno, fd = 0;
+	file_t *file;
 
-	if (oid_internal(oid))
-		do_open();
+	/* TODO: canonicalize path */
+	if (lookup(path, NULL, &oid) < 0)
+		POSIX_RET(-1, ENOENT);
+
+	process_lock(p);
+
+	if ((errno = file_new(p, &oid, &fd))) {
+		process_unlock(p);
+		POSIX_RET(-1, errno);
+	}
+
+	file = file_get(p, fd);
+
+	if ((file->node = posixsrv_node(&oid)) != NULL)
+		file->ops = file->node->ops;
 	else
-		do_generic_open();
-#endif
+		file->ops = &generic_ops;
 
-	return EOK;
+	file->oid = oid;
+	process_unlock(p);
+
+	errno = file->ops->open(file);
+	file_deref(file);
+	POSIX_RET(fd, EOK);
 }
 
 
-static int posix_close(process_t *p, int fd, ssize_t *retval)
+static int posix_close(process_t *p, int fd, int *retval)
 {
 	return EOK;
 }
@@ -318,104 +530,6 @@ static int posix_dup2(process_t *p, int fd1, int fd2, int *retval)
 	errno = _posix_dup2(p, fd1, fd2, retval);
 	process_unlock(p);
 	return errno;
-}
-
-
-/* Generic operations for files */
-
-static int posix_genericOpen(file_t *file)
-{
-	msg_t msg;
-
-	msg.i.data = msg.o.data = NULL;
-	msg.i.size = msg.o.size = 0;
-
-	msg.type = mtOpen;
-	msg.i.openclose.oid = file->oid;
-	msg.i.openclose.flags = 0; /* FIXME: field not necessary? */
-
-	if (msgSend(file->oid.port, &msg) < 0)
-		return EIO;
-
-	/* FIXME: agree on sign convention and meaning? */
-	if (msg.o.io.err)
-		return EIO;
-
-	return EOK;
-}
-
-
-static int posix_genericClose(file_t *file)
-{
-	msg_t msg;
-
-	msg.i.data = msg.o.data = NULL;
-	msg.i.size = msg.o.size = 0;
-
-	msg.type = mtClose;
-	msg.i.openclose.oid = file->oid;
-	msg.i.openclose.flags = 0; /* FIXME: field not necessary? */
-
-	if (msgSend(file->oid.port, &msg) < 0)
-		return EIO;
-
-	/* FIXME: agree on sign convention and meaning? */
-	if (msg.o.io.err)
-		return EIO;
-
-	return EOK;
-}
-
-
-static int posix_genericWrite(file_t *file, void *data, size_t size, ssize_t *retval)
-{
-	msg_t msg;
-
-	msg.i.data = data;
-	msg.i.size = size;
-
-	msg.o.data = NULL;
-	msg.o.size = 0;
-
-	msg.type = mtWrite;
-	msg.i.io.oid = file->oid;
-	msg.i.io.offs = file->offset;
-	msg.i.io.mode = 0; /* FIXME: field not necessary? */
-
-	if (msgSend(file->oid.port, &msg) < 0)
-		return EIO;
-
-	/* FIXME: agree on sign convention and meaning? */
-	if (msg.o.io.err)
-		return EIO;
-
-	return EOK;
-}
-
-
-static int posix_genericRead(file_t *file, void *data, size_t size, ssize_t *retval)
-{
-	msg_t msg;
-
-	msg.i.data = data;
-	msg.i.size = size;
-
-	msg.o.data = NULL;
-	msg.o.size = 0;
-
-	msg.type = mtRead;
-	msg.i.io.oid = file->oid;
-	msg.i.io.offs = file->offset;
-	msg.i.io.mode = 0; /* FIXME: field not necessary? */
-
-	if (msgSend(file->oid.port, &msg) < 0)
-		return EIO;
-
-	/* FIXME: agree on sign convention and meaning? */
-	if (msg.o.io.err)
-		return EIO;
-
-	return EOK;
 }
 
 
@@ -640,7 +754,7 @@ static void posixsrv_msgThread(void *arg)
 }
 
 
-static void posixsrv_init(pool_t *pool, unsigned port)
+static void pool_init(pool_t *pool, unsigned port)
 {
 	mutexCreate(&pool->lock);
 	condCreate(&pool->full);
@@ -655,15 +769,27 @@ static void posixsrv_init(pool_t *pool, unsigned port)
 }
 
 
+static void special_init(void)
+{
+	idtree_init(&posixsrv_common.nodes);
+
+	posixsrv_common.zero.ops = &zero_ops;
+	idtree_alloc(&posixsrv_common.nodes, &posixsrv_common.zero.linkage);
+
+	posixsrv_common.null.ops = &null_ops;
+	idtree_alloc(&posixsrv_common.nodes, &posixsrv_common.null.linkage);
+}
+
+
 int main(int argc, char **argv)
 {
 	pool_t pool;
-	unsigned port;
 	int i;
 
-	portCreate(&port);
-
-	posixsrv_init(&pool, port);
+	portCreate(&posixsrv_common.port);
+	pool_init(&pool, posixsrv_common.port);
+	idtree_init(&posixsrv_common.processes);
+	special_init();
 
 	for (i = 0; i < pool.min; ++i)
 		beginthread(posixsrv_poolThread, pool.priority, posixsrv_common.stacks[i], sizeof(posixsrv_common.stacks[i]), &pool);
