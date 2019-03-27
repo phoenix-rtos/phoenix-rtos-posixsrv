@@ -754,6 +754,13 @@ static void posixsrv_msgThread(void *arg)
 }
 
 
+static void posixsrv_init(void)
+{
+	portCreate(&posixsrv_common.port);
+	idtree_init(&posixsrv_common.processes);
+}
+
+
 static void pool_init(pool_t *pool, unsigned port)
 {
 	mutexCreate(&pool->lock);
@@ -786,10 +793,9 @@ int main(int argc, char **argv)
 	pool_t pool;
 	int i;
 
-	portCreate(&posixsrv_common.port);
-	pool_init(&pool, posixsrv_common.port);
-	idtree_init(&posixsrv_common.processes);
+	posixsrv_init();
 	special_init();
+	pool_init(&pool, posixsrv_common.port);
 
 	for (i = 0; i < pool.min; ++i)
 		beginthread(posixsrv_poolThread, pool.priority, posixsrv_common.stacks[i], sizeof(posixsrv_common.stacks[i]), &pool);
