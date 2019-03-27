@@ -70,7 +70,7 @@ $(PREFIX_PROG_STRIPPED)%: $(PREFIX_PROG)%
 	
 all: $(PREFIX_PROG_STRIPPED)posixsrv
 
-$(PREFIX_PROG)posixsrv: $(addprefix $(PREFIX_O), posixsrv_new.o)  # event.o pipe.o pty.o special.o tmpfile.o posixsrv.o)
+$(PREFIX_PROG)posixsrv: $(addprefix $(PREFIX_O), posixsrv.o)  # event.o pipe.o pty.o special.o tmpfile.o posixsrv.o)
 	$(LINK)
 	
 .PHONY: clean
