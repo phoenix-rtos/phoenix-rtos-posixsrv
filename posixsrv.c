@@ -218,17 +218,6 @@ const static file_ops_t generic_ops = {
 };
 
 
-/* Internal files */
-
-node_t *posixsrv_node(oid_t *oid)
-{
-	if (oid->port != posixsrv_common.port)
-		return NULL;
-
-	return lib_treeof(node_t, linkage, idtree_find(&posixsrv_common.nodes, oid->id));
-}
-
-
 /* File functions */
 
 static void file_lock(file_t *f)
@@ -250,38 +239,6 @@ static void file_destroy(file_t *f)
 }
 
 
-static int fd_alloc(process_t *p, int fd)
-{
-	while (fd++ < p->fdcount) {
-		if (p->fds[fd].file == NULL)
-			return fd;
-	}
-
-	return -1;
-}
-
-
-static int file_new(process_t *p, oid_t *oid, int *fd)
-{
-	file_t *f;
-
-	if ((*fd = fd_alloc(p, *fd)) < 0)
-		return ENFILE;
-
-	if ((f = p->fds[*fd].file = malloc(sizeof(file_t))) == NULL)
-		return ENOMEM;
-
-	memset(f, 0, sizeof(file_t));
-	mutexCreate(&f->lock);
-	f->refs = 1;
-	f->offset = 0;
-	f->mode = 0;
-	f->status = 0;
-
-	return EOK;
-}
-
-
 static void file_ref(file_t *f)
 {
 	file_lock(f);
@@ -300,14 +257,41 @@ static void file_deref(file_t *f)
 }
 
 
-static void fd_unused(process_t *p, int fd)
+/* File descriptor table functions */
+
+static int _fd_alloc(process_t *p, int fd)
 {
-	file_destroy(p->fds[fd].file);
-	p->fds[fd].file = NULL;
+	while (fd++ < p->fdcount) {
+		if (p->fds[fd].file == NULL)
+			return fd;
+	}
+
+	return -1;
 }
 
 
-static file_t *file_get(process_t *p, int fd)
+static int _file_new(process_t *p, oid_t *oid, int *fd)
+{
+	file_t *f;
+
+	if ((*fd = _fd_alloc(p, *fd)) < 0)
+		return ENFILE;
+
+	if ((f = p->fds[*fd].file = malloc(sizeof(file_t))) == NULL)
+		return ENOMEM;
+
+	memset(f, 0, sizeof(file_t));
+	mutexCreate(&f->lock);
+	f->refs = 1;
+	f->offset = 0;
+	f->mode = 0;
+	f->status = 0;
+
+	return EOK;
+}
+
+
+static file_t *_file_get(process_t *p, int fd)
 {
 	file_t *f;
 
@@ -318,6 +302,56 @@ static file_t *file_get(process_t *p, int fd)
 	return f;
 }
 
+static int _file_close(process_t *p, int fd)
+{
+	if (fd < 0 || fd >= p->fdcount || p->fds[fd].file == NULL)
+		return EBADF;
+
+	file_deref(p->fds[fd].file);
+	p->fds[fd].file = NULL;
+	return EOK;
+}
+
+
+static int file_new(process_t *p, oid_t *oid, int *fd)
+{
+	int errno;
+	process_lock(p);
+	errno = _file_new(p, oid, fd);
+	process_unlock(p);
+	return errno;
+}
+
+
+static file_t *file_get(process_t *p, int fd)
+{
+	file_t *f;
+	process_lock(p);
+	f = _file_get(p, fd);
+	process_unlock(p);
+	return f;
+}
+
+
+static int file_close(process_t *p, int fd)
+{
+	int errno;
+	process_lock(p);
+	errno = _file_close(p, fd);
+	process_unlock(p);
+	return errno;
+}
+
+
+/* Internal files */
+
+node_t *posixsrv_node(oid_t *oid)
+{
+	if (oid->port != posixsrv_common.port)
+		return NULL;
+
+	return lib_treeof(node_t, linkage, idtree_find(&posixsrv_common.nodes, oid->id));
+}
 
 #define POSIX_RET(val, err) return *retval = val, err
 
@@ -390,6 +424,17 @@ static const file_ops_t null_ops = {
 };
 
 
+/* /dev/ptmx */
+#if 0
+static int ptmx_open(file_t *file)
+{
+	if ((file->node = pty_new()) == NULL)
+		return ENOMEM;
+
+	return EOK;
+}
+#endif
+
 /* File operation wrappers */
 
 
@@ -430,26 +475,27 @@ static int posix_open(process_t *p, char *path, int oflag, mode_t mode, int *ret
 	if (lookup(path, NULL, &oid) < 0)
 		POSIX_RET(-1, ENOENT);
 
-	process_lock(p);
-
-	if ((errno = file_new(p, &oid, &fd))) {
-		process_unlock(p);
+	if ((errno = file_new(p, &oid, &fd)))
 		POSIX_RET(-1, errno);
-	}
 
 	file = file_get(p, fd);
 
+	file_lock(file);
 	if ((file->node = posixsrv_node(&oid)) != NULL)
 		file->ops = file->node->ops;
 	else
 		file->ops = &generic_ops;
 
 	file->oid = oid;
-	process_unlock(p);
+	file_unlock(file);
 
-	errno = file->ops->open(file);
+	if ((errno = file->ops->open(file))) {
+		file_close(p, fd);
+		fd = -1;
+	}
+
 	file_deref(file);
-	POSIX_RET(fd, EOK);
+	POSIX_RET(fd, errno);
 }
 
 
@@ -475,10 +521,10 @@ static int _posix_dup(process_t *p, int fd, int *retval)
 	if (fd < 0 || fd >= p->fdcount)
 		POSIX_RET(-1, EBADF);
 
-	if ((newfd = fd_alloc(p, fd)) < 0)
+	if ((newfd = _fd_alloc(p, fd)) < 0)
 		POSIX_RET(-1, EMFILE);
 
-	if ((f = file_get(p, fd)) == NULL)
+	if ((f = _file_get(p, fd)) == NULL)
 		POSIX_RET(-1, EBADF);
 
 	p->fds[newfd].file = f;
@@ -509,7 +555,7 @@ static int _posix_dup2(process_t *p, int fd, int fd2, int *retval)
 	if (fd2 < 0 || fd2 > p->fdcount)
 		POSIX_RET(-1, EBADF);
 
-	if ((f = file_get(p, fd)) == NULL)
+	if ((f = _file_get(p, fd)) == NULL)
 		POSIX_RET(-1, EBADF);
 
 	if ((f2 = p->fds[fd2].file) != NULL)
