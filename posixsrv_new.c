@@ -29,6 +29,8 @@ struct {
 	handle_t lock;
 	pid_t nextpid;
 	idtree_t processes;
+
+	long long stacks[4][0x400];
 } posixsrv_common;
 
 
@@ -225,6 +227,16 @@ static int posix_read(process_t *p, int fd, void *buf, size_t nbyte, ssize_t *re
 
 static int posix_open(process_t *p, char *path, int oflag, mode_t mode, ssize_t *retval)
 {
+#if 0
+	oid_t oid;
+	resolve_path(path, &oid);
+
+	if (oid_internal(oid))
+		do_open();
+	else
+		do_generic_open();
+#endif
+
 	return EOK;
 }
 
@@ -284,7 +296,6 @@ static int _posix_dup2(process_t *p, int fd, int fd2, int *retval)
 
 	if (fd2 < 0 || fd2 > p->fdcount)
 		POSIX_RET(-1, EBADF);
-		return *retval = -1, EBADF;
 
 	if ((f = file_get(p, fd)) == NULL)
 		POSIX_RET(-1, EBADF);
@@ -310,11 +321,101 @@ static int posix_dup2(process_t *p, int fd1, int fd2, int *retval)
 }
 
 
-/* Generic operations for external files */
+/* Generic operations for files */
 
-static ssize_t posix_genericWrite(file_t *file, void *data, size_t size)
+static int posix_genericOpen(file_t *file)
 {
-	return 0;
+	msg_t msg;
+
+	msg.i.data = msg.o.data = NULL;
+	msg.i.size = msg.o.size = 0;
+
+	msg.type = mtOpen;
+	msg.openclose.oid = file->oid;
+	msg.openclose.flags = 0; /* FIXME: field not necessary? */
+
+	if (msgSend(file->oid.port, &msg) < 0)
+		return EIO;
+
+	/* FIXME: agree on sign convention and meaning? */
+	if (msg.o.io.err)
+		return EIO;
+
+	return EOK;
+}
+
+
+static int posix_genericClose(file_t *file)
+{
+	msg_t msg;
+
+	msg.i.data = msg.o.data = NULL;
+	msg.i.size = msg.o.size = 0;
+
+	msg.type = mtClose;
+	msg.openclose.oid = file->oid;
+	msg.openclose.flags = 0; /* FIXME: field not necessary? */
+
+	if (msgSend(file->oid.port, &msg) < 0)
+		return EIO;
+
+	/* FIXME: agree on sign convention and meaning? */
+	if (msg.o.io.err)
+		return EIO;
+
+	return EOK;
+}
+
+
+static int posix_genericWrite(file_t *file, void *data, size_t size, ssize_t *retval)
+{
+	msg_t msg;
+
+	msg.i.data = data;
+	msg.i.size = size;
+
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	msg.type = mtWrite;
+	msg.io.oid = file->oid;
+	msg.io.offs = file->offset;
+	msg.io.mode = 0; /* FIXME: field not necessary? */
+
+	if (msgSend(file->oid.port, &msg) < 0)
+		return EIO;
+
+	/* FIXME: agree on sign convention and meaning? */
+	if (msg.o.io.err)
+		return EIO;
+
+	return EOK;
+}
+
+
+static int posix_genericRead(file_t *file, void *data, size_t size, ssize_t *retval)
+{
+	msg_t msg;
+
+	msg.i.data = data;
+	msg.i.size = size;
+
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	msg.type = mtRead;
+	msg.io.oid = file->oid;
+	msg.io.offs = file->offset;
+	msg.io.mode = 0; /* FIXME: field not necessary? */
+
+	if (msgSend(file->oid.port, &msg) < 0)
+		return EIO;
+
+	/* FIXME: agree on sign convention and meaning? */
+	if (msg.o.io.err)
+		return EIO;
+
+	return EOK;
 }
 
 
@@ -446,20 +547,50 @@ int posixsrv_handleMsg(msg_t *msg)
 }
 
 
+/* Threadpool functions */
+
+static void pool_lock(pool_t *pool)
+{
+	while (mutexLock(pool->lock) < 0) ;
+}
+
+
+static void pool_unlock(pool_t *pool)
+{
+	mutexUnlock(pool->lock);
+}
+
+
+static void pool_waitEmpty(pool_t *pool)
+{
+	condWait(pool->empty, pool->lock, 0);
+}
+
+
+static void pool_waitFull(pool_t *pool)
+{
+	condWait(pool->full, pool->lock, 0);
+}
+
+
 static void posixsrv_poolThread(void *arg)
 {
 	pool_t *pool = arg;
 	msg_t msg;
 	unsigned rid;
 
+	pool_lock(pool);
+	pool->count++;
+	pool_unlock(pool);
+
 	for (;;) {
 		rid = 0;
 
-		mutexLock(pool->lock);
+		pool_lock(pool);
 		pool->free++;
 
 		while (pool->msg != NULL)
-			condWait(pool->full, pool->lock, 0);
+			pool_waitFull(pool);
 
 		pool->msg = &msg;
 		pool->rid = &rid;
@@ -467,10 +598,10 @@ static void posixsrv_poolThread(void *arg)
 		condSignal(pool->empty);
 
 		while (!rid)
-			condWait(pool->empty, pool->lock, 0);
+			pool_waitEmpty(pool);
 
 		pool->free--;
-		mutexUnlock(pool->lock);
+		pool_unlock(pool);
 
 		priority(msg.priority);
 		posixsrv_handleMsg(&msg);
@@ -488,17 +619,17 @@ static void posixsrv_msgThread(void *arg)
 	unsigned *rid = NULL;
 
 	for (;;) {
-		mutexLock(pool->lock);
+		pool_lock(pool);
 		while ((msg = pool->msg) == NULL) {
 			/* TODO: spawn new thread */
-			condWait(pool->empty, pool->lock, 0);
+			pool_waitEmpty(pool);
 		}
 		rid = pool->rid;
 
 		pool->msg = NULL;
 		pool->rid = NULL;
 
-		mutexUnlock(pool->lock);
+		pool_unlock(pool);
 		condSignal(pool->full);
 
 		if (msgRecv(pool->port, msg, rid) < 0)
@@ -509,7 +640,35 @@ static void posixsrv_msgThread(void *arg)
 }
 
 
+static void posixsrv_init(pool_t *pool, unsigned port)
+{
+	mutexCreate(&pool->lock);
+	condCreate(&pool->full);
+	condCreate(&pool->empty);
+	pool->priority = 1;
+	pool->max = pool->min = sizeof(posixsrv_common.stacks) / sizeof(posixsrv_common.stacks[0]);
+	pool->free = 0;
+	pool->count = 0;
+	pool->port = port;
+	pool->rid = NULL;
+	pool->msg = NULL;
+}
+
+
 int main(int argc, char **argv)
 {
+	pool_t pool;
+	unsigned port;
+	int i;
+
+	portCreate(&port);
+
+	posixsrv_init(&pool, port);
+
+	for (i = 0; i < pool.min; ++i)
+		beginthread(posixsrv_poolThread, pool.priority, posixsrv_common.stacks[i], sizeof(posixsrv_common.stacks[i]), &pool);
+
+	priority(pool.priority);
+	posixsrv_msgThread(&pool);
 	return 0;
 }

@@ -15,11 +15,8 @@ typedef struct {
 	mode_t mode;
 	unsigned status;
 	file_ops_t *ops;
-
-	union {
-		oid_t oid;
-		void *data;
-	};
+	oid_t oid;
+	void *data;
 } file_t;
 
 
@@ -49,6 +46,8 @@ typedef struct {
 
 
 struct _file_ops_t {
+	int (*open)(file_t *);
+	int (*close)(file_t *);
 	int (*read)(file_t *, ssize_t *, void *, size_t);
 	int (*write)(file_t *, ssize_t *, void *, size_t);
 };
