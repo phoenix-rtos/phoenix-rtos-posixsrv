@@ -26,11 +26,14 @@
 
 
 struct {
-	handle_t lock;
-	pid_t nextpid;
-	idtree_t processes;
-	idtree_t nodes;
 	unsigned port;
+	pid_t nextpid;
+
+	handle_t plock;
+	idtree_t processes;
+
+	handle_t nlock;
+	idtree_t nodes;
 
 	node_t zero;
 	node_t null;
@@ -41,15 +44,15 @@ struct {
 
 /* Process functions */
 
-static void common_lock(void)
+static void proctree_lock(void)
 {
-	while (mutexLock(posixsrv_common.lock) < 0) ;
+	while (mutexLock(posixsrv_common.plock) < 0) ;
 }
 
 
-static void common_unlock(void)
+static void proctree_unlock(void)
 {
-	mutexUnlock(posixsrv_common.lock);
+	mutexUnlock(posixsrv_common.plock);
 }
 
 
@@ -72,12 +75,12 @@ static process_t *process_new(void)
 	if ((p = calloc(1, sizeof(*p))) == NULL)
 		return NULL;
 
-	common_lock();
+	proctree_lock();
 	p->pid = posixsrv_common.nextpid;
 	idtree_alloc(&posixsrv_common.processes, &p->linkage);
 	if ((posixsrv_common.nextpid = p->pid + 1) > POSIXSRV_MAX_PID)
 		posixsrv_common.nextpid = 1;
-	common_unlock();
+	proctree_unlock();
 
 	return p;
 }
@@ -94,10 +97,10 @@ static process_t *process_find(pid_t pid)
 {
 	process_t *p;
 
-	common_lock();
+	proctree_lock();
 	if ((p = lib_treeof(process_t, linkage, idtree_find(&posixsrv_common.processes, pid))) != NULL)
 		p->refs++;
-	common_unlock();
+	proctree_unlock();
 
 	return p;
 }
@@ -105,10 +108,10 @@ static process_t *process_find(pid_t pid)
 
 static void process_put(process_t *p)
 {
-	common_lock();
+	proctree_lock();
 	if (!--p->refs)
 		process_destroy(p);
-	common_unlock();
+	proctree_unlock();
 }
 
 
@@ -302,6 +305,7 @@ static file_t *_file_get(process_t *p, int fd)
 	return f;
 }
 
+
 static int _file_close(process_t *p, int fd)
 {
 	if (fd < 0 || fd >= p->fdcount || p->fds[fd].file == NULL)
@@ -345,13 +349,32 @@ static int file_close(process_t *p, int fd)
 
 /* Internal files */
 
-node_t *posixsrv_node(oid_t *oid)
+static void nodetree_lock(void)
 {
+	while (mutexLock(posixsrv_common.nlock) < 0) ;
+}
+
+
+static void nodetree_unlock(void)
+{
+	mutexUnlock(posixsrv_common.nlock);
+}
+
+
+node_t *node_get(oid_t *oid)
+{
+	node_t *node;
+
 	if (oid->port != posixsrv_common.port)
 		return NULL;
 
-	return lib_treeof(node_t, linkage, idtree_find(&posixsrv_common.nodes, oid->id));
+	nodetree_lock();
+	node = lib_treeof(node_t, linkage, idtree_find(&posixsrv_common.nodes, oid->id));
+	nodetree_unlock();
+
+	return node;
 }
+
 
 #define POSIX_RET(val, err) return *retval = val, err
 
@@ -481,7 +504,7 @@ static int posix_open(process_t *p, char *path, int oflag, mode_t mode, int *ret
 	file = file_get(p, fd);
 
 	file_lock(file);
-	if ((file->node = posixsrv_node(&oid)) != NULL)
+	if ((file->node = node_get(&oid)) != NULL)
 		file->ops = file->node->ops;
 	else
 		file->ops = &generic_ops;
@@ -804,6 +827,8 @@ static void posixsrv_init(void)
 {
 	portCreate(&posixsrv_common.port);
 	idtree_init(&posixsrv_common.processes);
+	mutexCreate(&posixsrv_common.plock);
+	mutexCreate(&posixsrv_common.nlock);
 }
 
 
