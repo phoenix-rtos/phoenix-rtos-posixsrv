@@ -12,6 +12,7 @@
 	ID(dup2) \
 	ID(pipe) \
 	ID(recvfrom) \
+	ID(execve)
 
 
 /*
@@ -58,7 +59,9 @@ typedef struct {
 	int fd;
 } posixsrv_dup_i_t;
 
-typedef int posixsrv_dup_o_t;
+typedef struct {
+	int retval;
+} posixsrv_dup_o_t;
 
 
 typedef struct {
@@ -127,6 +130,12 @@ typedef struct {
 	struct sockaddr address[];
 } posixsrv_recvfrom_o_t;
 
+
+typedef char posixsrv_execve_i_t[0];
+
+typedef struct {
+	int retval;
+} posixsrv_execve_o_t;
 
 
 #define POSIXSRV_INPUT_FIELD(name) posixsrv_##name##_i_t name;

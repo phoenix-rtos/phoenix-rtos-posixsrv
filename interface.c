@@ -1,12 +1,13 @@
 #include <sys/types.h>
 #include <sys/msg.h>
+#include <sys/mman.h>
 
 #include <errno.h>
 
 #include "interface.h"
 
 
-static int posixsrv_port = -1;
+int posixsrv_port = -1;
 
 
 int sys_write(ssize_t *retval, int fd, const void *buf, size_t nbyte)
@@ -85,6 +86,31 @@ int sys_open(ssize_t *retval, const char *path, int oflag, mode_t mode)
 }
 
 
+int sys_close(ssize_t *retval, int fd)
+{
+	msg_t msg;
+	posixsrv_i_t *_i = (void *)msg.i.raw;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_close;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	_i->close.fd = fd;
+
+	if (msgSend(posixsrv_port, &msg) < 0) {
+		*retval = -1;
+		return EIO;
+	}
+
+	*retval = _o->close.retval;
+	return _o->errno;
+}
+
+
 int sys_recvfrom(ssize_t *retval, int socket, void *buffer, size_t length, int flags, struct sockaddr *address, socklen_t *address_len)
 {
 	msg_t msg;
@@ -116,83 +142,133 @@ int sys_recvfrom(ssize_t *retval, int socket, void *buffer, size_t length, int f
 }
 
 
-#if 0
-#define POSIXSRV_CALL_PRE(NAME, ARGS, IDATA, ISIZE, ODATA, OSIZE) \
-static inline int sys_##NAME ARGS \
-{ \
-	int err; \
-	msg_t msg; \
-	posixsrv_i_t *_i __attribute__((unused)) = (void *)msg.i.raw; \
-	posixsrv_o_t *_o = (void *)msg.o.raw; \
-	msg.i.data = (void *)IDATA; \
-	msg.i.size = ISIZE; \
-	msg.o.data = ODATA; \
-	msg.o.size = OSIZE;
+int sys_dup(ssize_t *retval, int fd)
+{
+	msg_t msg;
+	posixsrv_i_t *_i = (void *)msg.i.raw;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
 
+	msg.type = posixsrv_dup;
 
-#define POSIXSRV_SEND \
-	if ((err = msgSend(posixsrv_port, &msg)) < 0) { \
-		*retval = -1; \
-		return EIO; \
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	_i->dup.fd = fd;
+
+	if (msgSend(posixsrv_port, &msg) < 0) {
+		*retval = -1;
+		return EIO;
 	}
 
-
-#define POSIXSRV_CALL_POST(NAME, RETACCESS) \
-	*retval = _o->NAME RETACCESS; \
-	return _o->errno; \
+	*retval = _o->dup.retval;
+	return _o->errno;
 }
 
 
-#define DEF_POSIXSRV_CALL00(NAME, ARGS, IDATA, ISIZE, ODATA, OSIZE, RETACCESS) \
-	POSIXSRV_CALL_PRE(NAME, ARGS, IDATA, ISIZE, ODATA, OSIZE) \
-	POSIXSRV_SEND \
-	POSIXSRV_CALL_POST(NAME, RETACCESS)
-
-
-#define DEF_POSIXSRV_CALL10(NAME, ARGS, IDATA, ISIZE, ODATA, OSIZE, ARG1, RETACCESS) \
-	POSIXSRV_CALL_PRE(NAME, ARGS, IDATA, ISIZE, ODATA, OSIZE) \
-	_i->NAME.ARG1 = ARG1; \
-	POSIXSRV_SEND \
-	POSIXSRV_CALL_POST(NAME, RETACCESS)
-
-
-#define DEF_POSIXSRV_CALL20(NAME, ARGS, IDATA, ISIZE, ODATA, OSIZE, ARG1, ARG2, RETACCESS) \
-	POSIXSRV_CALL_PRE(NAME, ARGS, IDATA, ISIZE, ODATA, OSIZE) \
-	_i->NAME.ARG1 = ARG1; \
-	_i->NAME.ARG1 = ARG2; \
-	POSIXSRV_SEND \
-	POSIXSRV_CALL_POST(NAME, RETACCESS)
-
-
-#define DEF_POSIXSRV_CALL02(NAME, ARGS, IDATA, ISIZE, ODATA, OSIZE, ARG1, ARG2, RETACCESS) \
-	POSIXSRV_CALL_PRE(NAME, ARGS, IDATA, ISIZE, ODATA, OSIZE) \
-	POSIXSRV_SEND \
-	_o->NAME.ARG1 = ARG1; \
-	_o->NAME.ARG1 = ARG2; \
-	POSIXSRV_CALL_POST(NAME, RETACCESS)
-
-
-static int posixsrv_port = -1;
-
-
-void posixsrv_init(void)
+int sys_dup2(ssize_t *retval, int fd1, int fd2)
 {
-	oid_t oid;
+	msg_t msg;
+	posixsrv_i_t *_i = (void *)msg.i.raw;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
 
-	if (!lookup("posixsrv", NULL, &oid))
-		posixsrv_port = oid.port;
+	msg.type = posixsrv_dup2;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	_i->dup2.fd1 = fd1;
+	_i->dup2.fd2 = fd2;
+
+	if (msgSend(posixsrv_port, &msg) < 0) {
+		*retval = -1;
+		return EIO;
+	}
+
+	*retval = _o->dup2.retval;
+	return _o->errno;
 }
 
 
-DEF_POSIXSRV_CALL10(write, (int fd, const void *buf, size_t nbyte, ssize_t *retval), buf, nbyte, NULL, 0, fd, )
+int sys_pipe(ssize_t *retval, int fd[2])
+{
+	msg_t msg;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
 
-DEF_POSIXSRV_CALL10(read, (int fd, void *buf, size_t nbyte, ssize_t *retval), NULL, 0, buf, nbyte, fd, )
+	msg.type = posixsrv_pipe;
 
-DEF_POSIXSRV_CALL20(open, (const char *path, int oflag, mode_t mode, int *retval), path, strlen(path) + 1, NULL, 0, oflag, mode, )
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
 
-DEF_POSIXSRV_CALL10(close, (int fd, int *retval), NULL, 0, NULL, 0, fd, )
+	if (msgSend(posixsrv_port, &msg) < 0) {
+		*retval = -1;
+		return EIO;
+	}
 
-DEF_POSIXSRV_CALL02(pipe, (int fd[2], int *retval), NULL, 0, NULL, 0, fd[0], fd[1], .retval)
+	fd[0] = _o->pipe.fd[0];
+	fd[1] = _o->pipe.fd[1];
 
-DEF_POSIXSRV_CALL20(dup2, (int fd1, int fd2, int *retval), NULL, 0, NULL, 0, fd1, fd2, )
-#endif
+	*retval = _o->pipe.retval;
+	return _o->errno;
+}
+
+
+int sys_execve(ssize_t *retval, const char *path, char *const argv[], char *const envp[])
+{
+	msg_t msg;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+	int i;
+	char *p;
+
+	msg.type = posixsrv_execve;
+
+	msg.i.size = strlen(path) + 1;
+
+	if (argv != NULL) {
+		for (i = 0; argv[i] != NULL; ++i)
+			msg.i.size += strlen(argv[i]) + 1;
+	}
+
+	msg.i.size++;
+
+	if (envp != NULL) {
+		for (i = 0; envp[i] != NULL; ++i)
+			msg.i.size += strlen(envp[i]) + 1;
+	}
+
+	if ((p = msg.i.data = mmap(NULL, (msg.i.size + SIZE_PAGE - 1) & (SIZE_PAGE - 1), PROT_READ | PROT_WRITE, MAP_NONE, NULL, -1)) == MAP_FAILED) {
+		*retval = -1;
+		return ENOMEM;
+	}
+
+	p = stpcpy(p, path);
+
+	if (argv != NULL) {
+		for (i = 0; argv[i] != NULL; ++i)
+			p = stpcpy(p, argv[i]);
+	}
+
+	p = stpcpy(p, "");
+
+	if (envp != NULL) {
+		for (i = 0; envp[i] != NULL; ++i)
+			p = stpcpy(p, envp[i]);
+	}
+
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	if (msgSend(posixsrv_port, &msg) < 0) {
+		*retval = -1;
+		return EIO;
+	}
+
+	munmap(msg.i.data, (msg.i.size + SIZE_PAGE - 1) & (SIZE_PAGE - 1));
+	*retval = _o->execve.retval;
+	return _o->errno;
+}
