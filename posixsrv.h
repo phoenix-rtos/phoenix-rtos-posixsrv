@@ -37,6 +37,9 @@ typedef struct {
 	handle_t lock;
 	unsigned refs;
 
+	int npid;
+	rbnode_t native;
+
 	pid_t pid;
 	pid_t ppid;
 	pid_t pgid;

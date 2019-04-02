@@ -31,6 +31,7 @@ struct {
 
 	handle_t plock;
 	idtree_t processes;
+	rbtree_t natives;
 
 	handle_t nlock;
 	idtree_t nodes;
@@ -553,7 +554,7 @@ static int posix_close(process_t *p, int fd, int *retval)
 }
 
 
-/* Other */
+/* Other calls */
 
 static int posix_pipe(process_t *p, int fd[2], ssize_t *retval)
 {
@@ -627,9 +628,64 @@ static int posix_dup2(process_t *p, int fd1, int fd2, int *retval)
 }
 
 
+
+static int native_cmp(rbnode_t *n1, rbnode_t *n2)
+{
+	process_t *p1 = lib_treeof(process_t, native, n1);
+	process_t *p2 = lib_treeof(process_t, native, n2);
+
+	if (p1->npid < p2->npid)
+		return -1;
+
+	else if (p1->npid > p2->npid)
+		return 1;
+
+	return 0;
+}
+
+
+static void native_unlink(process_t *p)
+{
+	lib_rbRemove(&process_common.natives, &p->native);
+}
+
+
+static void native_link(process_t *p)
+{
+	lib_rbInsert(&process_common.natives, &p->native);
+}
+
+
+static int native_spawn(const char *path, char *const argv[], char *const envp[])
+{
+	int pid;
+
+	if (!(pid = vfork())) {
+		exec(path, argv, envp);
+		exit(-1);
+	}
+
+	return pid;
+}
+
+
 static int posix_execve(process_t *p, const char *path, char *const argv[], char *const envp[], int *retval)
 {
-	POSIX_RET(-1, ENOSYS);
+	int pid;
+
+	process_lock(p);
+	proctree_lock();
+
+	if ((pid = native_spawn(path, argv, envp)) > 0) {
+		native_unlink(p);
+		p->npid = pid;
+		native_link(p);
+	}
+
+	proctree_unlock();
+	process_unlock(p);
+
+	POSIX_RET(-1, -pid);
 }
 
 
@@ -955,6 +1011,7 @@ static void posixsrv_init(void)
 	portCreate(&posixsrv_common.port);
 	portRegister(posixsrv_common.port, "/posixsrv", NULL);
 	idtree_init(&posixsrv_common.processes);
+	lib_rbInit(&posixsrv_common.natives);
 	mutexCreate(&posixsrv_common.plock);
 	mutexCreate(&posixsrv_common.nlock);
 	posixsrv_common.nextpid = 1;
