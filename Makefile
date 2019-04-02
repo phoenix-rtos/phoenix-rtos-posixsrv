@@ -9,9 +9,9 @@
 SIL ?= @
 MAKEFLAGS += --no-print-directory
 
-#TARGET ?= ia32-qemu
+TARGET ?= ia32-qemu
 #TARGET ?= armv7-stm32
-TARGET ?= arm-imx6ull
+#TARGET ?= arm-imx6ull
 
 TOPDIR := $(CURDIR)
 PREFIX_BUILD ?= ../_build/$(TARGET)
@@ -45,7 +45,8 @@ ARCH =  $(SIL)@mkdir -p $(@D); \
 
 LINK = $(SIL)mkdir -p $(@D); \
 	(printf "LD  %-24s\n" "$(@F)"); \
-	$(LD) $(LDFLAGS) -o "$@"  $^ $(PREFIX_A)libtty.a $(LDLIBS)
+	$(LD) $(LDFLAGS) -o "$@"  $^ $(LDLIBS)
+#	$(LD) $(LDFLAGS) -o "$@"  $^ $(PREFIX_A)libtty.a $(LDLIBS)
 	
 HEADER = $(SIL)mkdir -p $(@D); \
 	(printf "HEADER %-24s\n" "$<"); \

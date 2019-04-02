@@ -8,14 +8,14 @@
 
 CROSS ?= i386-pc-phoenix-
 
-SUBDIRS = tty/libtty tty/pc-tty tty/pc-uart storage/pc-ata
+# SUBDIRS = tty/libtty tty/pc-tty tty/pc-uart storage/pc-ata
 
 MKDEP = $(CROSS)gcc -MM
 MKDEPFLAGS = $(CFLAGS)
 
 CC = $(CROSS)gcc
 
-CFLAGS += -O2 -g -Wall -Wstrict-prototypes -nostartfiles -nostdlib\
+CFLAGS += -O2 -g -Wall -Wstrict-prototypes -nostartfiles\
 	-m32 -mtune=generic -mno-mmx -mno-sse -fno-pic -fno-pie\
 	-fomit-frame-pointer -fno-strength-reduce
 
