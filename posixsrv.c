@@ -68,12 +68,37 @@ static void process_unlock(process_t *p)
 }
 
 
-static process_t *process_new(void)
+static process_t *process_new(process_t *parent)
 {
 	process_t *p;
 
 	if ((p = calloc(1, sizeof(*p))) == NULL)
 		return NULL;
+
+	p->refs = 2;
+
+	if (parent != NULL) {
+		p->ppid = parent->pid;
+
+		p->pgid = parent->pgid;
+		p->sid = parent->sid;
+		p->uid = parent->uid;
+		p->euid = parent->euid;
+		p->gid = parent->gid;
+		p->egid = parent->egid;
+
+		p->cwd = parent->cwd;
+
+		p->fdcount = parent->fdcount;
+		if ((p->fds = malloc(parent->fdcount * sizeof(fildes_t))) == NULL) {
+			free(p);
+			return NULL;
+		}
+
+		memcpy(p->fds, parent->fds, p->fdcount * sizeof(fildes_t));
+	}
+
+	mutexCreate(&p->lock);
 
 	proctree_lock();
 	p->pid = posixsrv_common.nextpid;
@@ -361,7 +386,7 @@ static void nodetree_unlock(void)
 }
 
 
-node_t *node_get(oid_t *oid)
+static node_t *node_get(oid_t *oid)
 {
 	node_t *node;
 
@@ -602,6 +627,12 @@ static int posix_dup2(process_t *p, int fd1, int fd2, int *retval)
 }
 
 
+static int posix_execve(process_t *p, const char *path, char *const argv[], char *const envp[], int *retval)
+{
+	POSIX_RET(-1, ENOSYS);
+}
+
+
 /* Handler functions */
 
 
@@ -613,7 +644,7 @@ static int handle_write(process_t *p, msg_t *msg)
 	int fd = _i->write.fd;
 	void *data = msg->i.data;
 	size_t size = msg->i.size;
-	ssize_t *retval = &_o->write;
+	ssize_t *retval = &_o->write.retval;
 
 	_o->errno = posix_write(p, fd, data, size, retval);
 	return EOK;
@@ -628,7 +659,7 @@ static int handle_read(process_t *p, msg_t *msg)
 	int fd = _i->read.fd;
 	void *data = msg->o.data;
 	size_t size = msg->o.size;
-	ssize_t *retval = &_o->read;
+	ssize_t *retval = &_o->read.retval;
 
 	_o->errno = posix_read(p, fd, data, size, retval);
 	return EOK;
@@ -643,7 +674,7 @@ static int handle_open(process_t *p, msg_t *msg)
 	int oflag = _i->open.oflag;
 	mode_t mode = _i->open.mode;
 	char *path = msg->i.data;
-	int *retval = &_o->open;
+	int *retval = &_o->open.retval;
 
 	_o->errno = posix_open(p, path, oflag, mode, retval);
 	return EOK;
@@ -656,7 +687,7 @@ static int handle_close(process_t *p, msg_t *msg)
 	posixsrv_o_t *_o = (void *)msg->o.raw;
 
 	int fd = _i->close.fd;
-	ssize_t *retval = &_o->close;
+	ssize_t *retval = &_o->close.retval;
 
 	_o->errno = posix_close(p, fd, retval);
 	return EOK;
@@ -681,7 +712,7 @@ static int handle_dup(process_t *p, msg_t *msg)
 	posixsrv_o_t *_o = (void *)msg->o.raw;
 
 	int fd = _i->dup.fd;
-	int *retval = &_o->dup;
+	int *retval = &_o->dup.retval;
 
 	_o->errno = posix_dup(p, fd, retval);
 	return EOK;
@@ -695,17 +726,113 @@ static int handle_dup2(process_t *p, msg_t *msg)
 
 	int fd1 = _i->dup2.fd1;
 	int fd2 = _i->dup2.fd2;
-	int *retval = &_o->dup2;
+	int *retval = &_o->dup2.retval;
 
 	_o->errno = posix_dup2(p, fd1, fd2, retval);
 	return EOK;
 }
 
 
+static int handle_recvfrom(process_t *p, msg_t *msg)
+{
+	return -ENOSYS;
+}
+
+
+static int handle_execve(process_t *p, msg_t *msg)
+{
+	posixsrv_o_t *_o = (void *)msg->o.raw;
+	int *retval = &_o->dup2.retval;
+
+	size_t size = msg->i.size;
+	char *data;
+	char *path;
+	char **argv;
+	char **envp;
+
+	int argc = 0;
+	int envc = 0;
+	int i;
+
+	size_t len;
+	char *s, *argv0;
+
+	if ((data = malloc(size)) == NULL) {
+		_o->errno = ENOMEM;
+		_o->execve.retval = -1;
+		return -ENOMEM;
+	}
+
+	memcpy(data, msg->i.data, size);
+
+	path = data;
+	argv0 = s = path + strlen(path) + 1;
+
+	while (s < data + size) {
+		if (!(len = strlen(s)))
+			break;
+
+		argc++;
+		s += len + 1;
+	}
+
+	while (s < data + size) {
+		if (!(len = strlen(s)))
+			break;
+
+		envc++;
+		s += len + 1;
+	}
+
+	if ((argv = malloc(argc * sizeof(char *))) == NULL) {
+		free(data);
+
+		_o->errno = ENOMEM;
+		_o->execve.retval = -1;
+		return -ENOMEM;
+	}
+
+	if ((envp = malloc(envc * sizeof(char *))) == NULL) {
+		free(data);
+		free(argv);
+
+		_o->errno = ENOMEM;
+		_o->execve.retval = -1;
+		return -ENOMEM;
+	}
+
+	s = argv0;
+
+	for (i = 0; i <= argc; ++i) {
+		argv[i] = s;
+		s += strlen(s) + 1;
+	}
+
+	argv[argc] = NULL;
+
+	for (i = 0; i < envc; ++i) {
+		envp[i] = s;
+		s += strlen(s) + 1;
+	}
+
+	envp[envc] = NULL;
+
+	_o->errno = posix_execve(p, path, argv, envp, retval);
+
+	/* data, argv & envp are consumed by posix_execve on success */
+	if (_o->errno) {
+		free(data);
+		free(argv);
+		free(envp);
+	}
+
+	return EOK;
+}
+
 
 /* Interface threads */
 
-int posixsrv_handleMsg(msg_t *msg)
+static int posixsrv_handleMsg(msg_t *msg)
 {
 	int err;
 	process_t *process;
@@ -826,9 +953,11 @@ static void posixsrv_msgThread(void *arg)
 static void posixsrv_init(void)
 {
 	portCreate(&posixsrv_common.port);
+	portRegister(posixsrv_common.port, "/posixsrv", NULL);
 	idtree_init(&posixsrv_common.processes);
 	mutexCreate(&posixsrv_common.plock);
 	mutexCreate(&posixsrv_common.nlock);
+	posixsrv_common.nextpid = 1;
 }
 
 

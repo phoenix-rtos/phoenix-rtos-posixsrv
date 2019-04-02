@@ -3,7 +3,7 @@
 
 
 #define POSIXSRV_MAX_PID ((1LL << 30) - 1)
-
+#define POSIXSRV_MAX_FDS 128
 
 typedef struct _file_ops_t file_ops_t;
 
