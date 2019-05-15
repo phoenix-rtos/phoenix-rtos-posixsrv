@@ -100,6 +100,14 @@ static process_t *process_new(process_t *parent)
 
 		memcpy(p->fds, parent->fds, p->fdcount * sizeof(fildes_t));
 	}
+	else {
+		p->fdcount = 4;
+
+		if ((p->fds = calloc(p->fdcount, sizeof(fildes_t))) == NULL) {
+			free(p);
+			return NULL;
+		}
+	}
 
 	mutexCreate(&p->lock);
 
@@ -308,11 +316,31 @@ static void file_deref(file_t *f)
 
 /* File descriptor table functions */
 
+static int _fd_realloc(process_t *p)
+{
+	fildes_t *new;
+	int fdcount;
+
+	fdcount = p->fdcount * 2;
+
+	if ((new = realloc(p->fds, fdcount * sizeof(fildes_t))) == NULL)
+		return ENOMEM;
+
+	memset(new + p->fdcount, 0, p->fdcount * sizeof(fildes_t));
+	p->fds = new;
+	p->fdcount = fdcount;
+
+	return EOK;
+}
+
+
 static int _fd_alloc(process_t *p, int fd)
 {
-	while (fd++ < p->fdcount) {
+	while (fd < p->fdcount) {
 		if (p->fds[fd].file == NULL)
 			return fd;
+
+		fd++;
 	}
 
 	return -1;
@@ -322,9 +350,19 @@ static int _fd_alloc(process_t *p, int fd)
 static int _file_new(process_t *p, oid_t *oid, int *fd)
 {
 	file_t *f;
+	int newfd;
 
-	if ((*fd = _fd_alloc(p, *fd)) < 0)
-		return ENFILE;
+	if ((newfd = _fd_alloc(p, *fd)) < 0) {
+		newfd = p->fdcount;
+
+		/* TODO: set a limit for fd's */
+		if (_fd_realloc(p) != EOK)
+			return ENOMEM;
+
+		newfd = _fd_alloc(p, newfd);
+	}
+
+	*fd = newfd;
 
 	if ((f = p->fds[*fd].file = malloc(sizeof(file_t))) == NULL)
 		return ENOMEM;
