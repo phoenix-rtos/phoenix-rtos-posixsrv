@@ -29,6 +29,8 @@ struct {
 	unsigned port;
 	pid_t nextpid;
 
+	process_t *init;
+
 	handle_t plock;
 	idtree_t processes;
 	rbtree_t natives;
@@ -132,8 +134,26 @@ static process_t *process_find(pid_t pid)
 }
 
 
+static process_t *process_nativeFind(int npid)
+{
+	process_t *p, t;
+
+	t.npid = npid;
+
+	proctree_lock();
+	if ((p = lib_treeof(process_t, native, lib_rbFind(&posixsrv_common.natives, &t.native))) != NULL)
+		p->refs++;
+	proctree_unlock();
+
+	return p;
+}
+
+
 static void process_put(process_t *p)
 {
+	if (!p)
+		return;
+
 	proctree_lock();
 	if (!--p->refs)
 		process_destroy(p);
@@ -402,7 +422,9 @@ static node_t *node_get(oid_t *oid)
 }
 
 
-#define POSIX_RET(val, err) return *retval = val, err
+#define POSIX_RET(val, err) return (*retval = (val), (err))
+#define SYSCALL_RET(val) return (((val) < 0) ? (*retval = -1), -(val) : (*retval = (val)), EOK)
+
 
 /* /dev/zero */
 
@@ -558,6 +580,7 @@ static int posix_close(process_t *p, int fd, int *retval)
 
 static int posix_pipe(process_t *p, int fd[2], ssize_t *retval)
 {
+	debug("pipe\n");
 	return EOK;
 }
 
@@ -628,7 +651,6 @@ static int posix_dup2(process_t *p, int fd1, int fd2, int *retval)
 }
 
 
-
 static int native_cmp(rbnode_t *n1, rbnode_t *n2)
 {
 	process_t *p1 = lib_treeof(process_t, native, n1);
@@ -646,26 +668,21 @@ static int native_cmp(rbnode_t *n1, rbnode_t *n2)
 
 static void native_unlink(process_t *p)
 {
-	lib_rbRemove(&process_common.natives, &p->native);
+	lib_rbRemove(&posixsrv_common.natives, &p->native);
 }
 
 
-static void native_link(process_t *p)
+static void native_link(process_t *p, int pid)
 {
-	lib_rbInsert(&process_common.natives, &p->native);
+	p->npid = pid;
+	lib_rbInsert(&posixsrv_common.natives, &p->native);
 }
 
 
 static int native_spawn(const char *path, char *const argv[], char *const envp[])
 {
-	int pid;
-
-	if (!(pid = vfork())) {
-		exec(path, argv, envp);
-		exit(-1);
-	}
-
-	return pid;
+	extern int sys_spawn(const char *, char * const *, char * const *);
+	return sys_spawn(path, argv, envp);
 }
 
 
@@ -678,18 +695,46 @@ static int posix_execve(process_t *p, const char *path, char *const argv[], char
 
 	if ((pid = native_spawn(path, argv, envp)) > 0) {
 		native_unlink(p);
-		p->npid = pid;
-		native_link(p);
+		native_link(p, pid);
 	}
 
 	proctree_unlock();
 	process_unlock(p);
 
-	POSIX_RET(-1, -pid);
+	SYSCALL_RET(pid);
+}
+
+
+static int posix_init(int pid)
+{
+	process_t *init;
+
+	if (posixsrv_common.init)
+		return EACCES;
+
+	if ((init = posixsrv_common.init = process_new(NULL)) == NULL)
+		return ENOMEM;
+
+	process_lock(init);
+	proctree_lock();
+	native_link(init, pid);
+	proctree_unlock();
+	process_unlock(init);
+
+	return EOK;
 }
 
 
 /* Handler functions */
+
+/* init attaches first process to sender */
+static int handle_init(msg_t *msg)
+{
+	posixsrv_o_t *_o = (void *)msg->o.raw;
+
+	_o->errno = posix_init(msg->pid);
+	return EOK;
+}
 
 
 static int handle_write(process_t *p, msg_t *msg)
@@ -798,7 +843,7 @@ static int handle_recvfrom(process_t *p, msg_t *msg)
 static int handle_execve(process_t *p, msg_t *msg)
 {
 	posixsrv_o_t *_o = (void *)msg->o.raw;
-	int *retval = &_o->dup2.retval;
+	int *retval = &_o->execve.retval;
 
 	size_t size = msg->i.size;
 	char *data;
@@ -840,7 +885,7 @@ static int handle_execve(process_t *p, msg_t *msg)
 		s += len + 1;
 	}
 
-	if ((argv = malloc(argc * sizeof(char *))) == NULL) {
+	if ((argv = malloc((argc + 1) * sizeof(char *))) == NULL) {
 		free(data);
 
 		_o->errno = ENOMEM;
@@ -848,7 +893,7 @@ static int handle_execve(process_t *p, msg_t *msg)
 		return -ENOMEM;
 	}
 
-	if ((envp = malloc(envc * sizeof(char *))) == NULL) {
+	if ((envp = malloc((envc + 1) * sizeof(char *))) == NULL) {
 		free(data);
 		free(argv);
 
@@ -891,15 +936,16 @@ static int handle_execve(process_t *p, msg_t *msg)
 static int posixsrv_handleMsg(msg_t *msg)
 {
 	int err;
-	process_t *process;
-
-	if ((process = process_find(msg->pid)) == NULL)
-		return -EINVAL;
+	process_t *process = process_nativeFind(msg->pid);
 
 #define POSIXSRV_CASE(name) \
-	case posixsrv_##name: err = handle_##name(process, msg); break;
+	case posixsrv_##name: err = process ? handle_##name(process, msg) : -ENOENT; break;
 
 	switch (msg->type) {
+		case posixsrv_init:
+			err = handle_init(msg);
+			break;
+
 		POSIXSRV_CALLS(POSIXSRV_CASE)
 		default:
 			err = -EINVAL;
@@ -1006,12 +1052,12 @@ static void posixsrv_msgThread(void *arg)
 }
 
 
-static void posixsrv_init(void)
+static void init(void)
 {
 	portCreate(&posixsrv_common.port);
 	portRegister(posixsrv_common.port, "/posixsrv", NULL);
 	idtree_init(&posixsrv_common.processes);
-	lib_rbInit(&posixsrv_common.natives);
+	lib_rbInit(&posixsrv_common.natives, native_cmp, NULL);
 	mutexCreate(&posixsrv_common.plock);
 	mutexCreate(&posixsrv_common.nlock);
 	posixsrv_common.nextpid = 1;
@@ -1050,7 +1096,7 @@ int main(int argc, char **argv)
 	pool_t pool;
 	int i;
 
-	posixsrv_init();
+	init();
 	special_init();
 	pool_init(&pool, posixsrv_common.port);
 

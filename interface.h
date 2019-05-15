@@ -49,6 +49,7 @@
 
 #define POSIXSRV_DEFINE_ENUM(name) posixsrv_##name,
 enum {
+	posixsrv_init = 0,
 	POSIXSRV_CALLS(POSIXSRV_DEFINE_ENUM)
 	posixsrv_calls_count
 };

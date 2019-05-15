@@ -10,8 +10,42 @@
 int posixsrv_port = -1;
 
 
-int sys_write(ssize_t *retval, int fd, const void *buf, size_t nbyte)
+int px_connect()
 {
+	oid_t oid;
+
+	if (lookup("/posixsrv", NULL, &oid) < 0)
+		return -ENOSYS;
+
+	posixsrv_port = oid.port;
+
+	return EOK;
+}
+
+
+int px_init()
+{
+	int err;
+	msg_t msg;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_init;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0)
+		return err;
+
+	return _o->errno;
+}
+
+
+int px_write(ssize_t *retval, int fd, const void *buf, size_t nbyte)
+{
+	int err;
 	msg_t msg;
 	posixsrv_i_t *_i = (void *)msg.i.raw;
 	posixsrv_o_t *_o = (void *)msg.o.raw;
@@ -25,9 +59,9 @@ int sys_write(ssize_t *retval, int fd, const void *buf, size_t nbyte)
 
 	_i->write.fd = fd;
 
-	if (msgSend(posixsrv_port, &msg) < 0) {
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
 		*retval = -1;
-		return EIO;
+		return err;
 	}
 
 	*retval = _o->write.retval;
@@ -35,8 +69,9 @@ int sys_write(ssize_t *retval, int fd, const void *buf, size_t nbyte)
 }
 
 
-int sys_read(ssize_t *retval, int fd, void *buf, size_t nbyte)
+int px_read(ssize_t *retval, int fd, void *buf, size_t nbyte)
 {
+	int err;
 	msg_t msg;
 	posixsrv_i_t *_i = (void *)msg.i.raw;
 	posixsrv_o_t *_o = (void *)msg.o.raw;
@@ -50,9 +85,9 @@ int sys_read(ssize_t *retval, int fd, void *buf, size_t nbyte)
 
 	_i->read.fd = fd;
 
-	if (msgSend(posixsrv_port, &msg) < 0) {
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
 		*retval = -1;
-		return EIO;
+		return err;
 	}
 
 	*retval = _o->read.retval;
@@ -60,8 +95,9 @@ int sys_read(ssize_t *retval, int fd, void *buf, size_t nbyte)
 }
 
 
-int sys_open(ssize_t *retval, const char *path, int oflag, mode_t mode)
+int px_open(ssize_t *retval, const char *path, int oflag, mode_t mode)
 {
+	int err;
 	msg_t msg;
 	posixsrv_i_t *_i = (void *)msg.i.raw;
 	posixsrv_o_t *_o = (void *)msg.o.raw;
@@ -76,9 +112,9 @@ int sys_open(ssize_t *retval, const char *path, int oflag, mode_t mode)
 	_i->open.oflag = oflag;
 	_i->open.mode = mode;
 
-	if (msgSend(posixsrv_port, &msg) < 0) {
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
 		*retval = -1;
-		return EIO;
+		return err;
 	}
 
 	*retval = _o->open.retval;
@@ -86,8 +122,9 @@ int sys_open(ssize_t *retval, const char *path, int oflag, mode_t mode)
 }
 
 
-int sys_close(ssize_t *retval, int fd)
+int px_close(ssize_t *retval, int fd)
 {
+	int err;
 	msg_t msg;
 	posixsrv_i_t *_i = (void *)msg.i.raw;
 	posixsrv_o_t *_o = (void *)msg.o.raw;
@@ -101,9 +138,9 @@ int sys_close(ssize_t *retval, int fd)
 
 	_i->close.fd = fd;
 
-	if (msgSend(posixsrv_port, &msg) < 0) {
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
 		*retval = -1;
-		return EIO;
+		return err;
 	}
 
 	*retval = _o->close.retval;
@@ -111,8 +148,9 @@ int sys_close(ssize_t *retval, int fd)
 }
 
 
-int sys_recvfrom(ssize_t *retval, int socket, void *buffer, size_t length, int flags, struct sockaddr *address, socklen_t *address_len)
+int px_recvfrom(ssize_t *retval, int socket, void *buffer, size_t length, int flags, struct sockaddr *address, socklen_t *address_len)
 {
+	int err;
 	msg_t msg;
 	posixsrv_i_t *_i = (void *)msg.i.raw;
 	posixsrv_o_t *_o = (void *)msg.o.raw;
@@ -127,9 +165,9 @@ int sys_recvfrom(ssize_t *retval, int socket, void *buffer, size_t length, int f
 	_i->recvfrom.socket = socket;
 	_i->recvfrom.flags = flags;
 
-	if (msgSend(posixsrv_port, &msg) < 0) {
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
 		*retval = -1;
-		return EIO;
+		return err;
 	}
 
 	if (address != NULL) {
@@ -142,8 +180,9 @@ int sys_recvfrom(ssize_t *retval, int socket, void *buffer, size_t length, int f
 }
 
 
-int sys_dup(ssize_t *retval, int fd)
+int px_dup(ssize_t *retval, int fd)
 {
+	int err;
 	msg_t msg;
 	posixsrv_i_t *_i = (void *)msg.i.raw;
 	posixsrv_o_t *_o = (void *)msg.o.raw;
@@ -157,9 +196,9 @@ int sys_dup(ssize_t *retval, int fd)
 
 	_i->dup.fd = fd;
 
-	if (msgSend(posixsrv_port, &msg) < 0) {
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
 		*retval = -1;
-		return EIO;
+		return err;
 	}
 
 	*retval = _o->dup.retval;
@@ -167,8 +206,9 @@ int sys_dup(ssize_t *retval, int fd)
 }
 
 
-int sys_dup2(ssize_t *retval, int fd1, int fd2)
+int px_dup2(ssize_t *retval, int fd1, int fd2)
 {
+	int err;
 	msg_t msg;
 	posixsrv_i_t *_i = (void *)msg.i.raw;
 	posixsrv_o_t *_o = (void *)msg.o.raw;
@@ -183,9 +223,9 @@ int sys_dup2(ssize_t *retval, int fd1, int fd2)
 	_i->dup2.fd1 = fd1;
 	_i->dup2.fd2 = fd2;
 
-	if (msgSend(posixsrv_port, &msg) < 0) {
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
 		*retval = -1;
-		return EIO;
+		return err;
 	}
 
 	*retval = _o->dup2.retval;
@@ -193,8 +233,9 @@ int sys_dup2(ssize_t *retval, int fd1, int fd2)
 }
 
 
-int sys_pipe(ssize_t *retval, int fd[2])
+int px_pipe(ssize_t *retval, int fd[2])
 {
+	int err;
 	msg_t msg;
 	posixsrv_o_t *_o = (void *)msg.o.raw;
 
@@ -205,9 +246,9 @@ int sys_pipe(ssize_t *retval, int fd[2])
 	msg.o.data = NULL;
 	msg.o.size = 0;
 
-	if (msgSend(posixsrv_port, &msg) < 0) {
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
 		*retval = -1;
-		return EIO;
+		return err;
 	}
 
 	fd[0] = _o->pipe.fd[0];
@@ -218,8 +259,9 @@ int sys_pipe(ssize_t *retval, int fd[2])
 }
 
 
-int sys_execve(ssize_t *retval, const char *path, char *const argv[], char *const envp[])
+int px_execve(ssize_t *retval, const char *path, char *const argv[], char *const envp[])
 {
+	int err;
 	msg_t msg;
 	posixsrv_o_t *_o = (void *)msg.o.raw;
 	int i;
@@ -241,31 +283,30 @@ int sys_execve(ssize_t *retval, const char *path, char *const argv[], char *cons
 			msg.i.size += strlen(envp[i]) + 1;
 	}
 
-	if ((p = msg.i.data = mmap(NULL, (msg.i.size + SIZE_PAGE - 1) & (SIZE_PAGE - 1), PROT_READ | PROT_WRITE, MAP_NONE, NULL, -1)) == MAP_FAILED) {
+	if ((p = msg.i.data = mmap(NULL, (msg.i.size + SIZE_PAGE - 1) & ~(SIZE_PAGE - 1), PROT_READ | PROT_WRITE, MAP_NONE, NULL, -1)) == MAP_FAILED) {
 		*retval = -1;
 		return ENOMEM;
 	}
-
-	p = stpcpy(p, path);
+	p = stpcpy(p, path) + 1;
 
 	if (argv != NULL) {
 		for (i = 0; argv[i] != NULL; ++i)
-			p = stpcpy(p, argv[i]);
+			p = stpcpy(p, argv[i]) + 1;
 	}
 
-	p = stpcpy(p, "");
+	p = stpcpy(p, "") + 1;
 
 	if (envp != NULL) {
 		for (i = 0; envp[i] != NULL; ++i)
-			p = stpcpy(p, envp[i]);
+			p = stpcpy(p, envp[i]) + 1;
 	}
 
 	msg.o.data = NULL;
 	msg.o.size = 0;
 
-	if (msgSend(posixsrv_port, &msg) < 0) {
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
 		*retval = -1;
-		return EIO;
+		return err;
 	}
 
 	munmap(msg.i.data, (msg.i.size + SIZE_PAGE - 1) & (SIZE_PAGE - 1));
