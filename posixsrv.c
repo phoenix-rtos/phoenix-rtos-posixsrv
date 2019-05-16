@@ -24,6 +24,8 @@
 #include "interface.h"
 #include "posixsrv.h"
 
+#define POSIX_RET(val, err) return (*retval = (val), (err))
+#define SYSCALL_RET(val) return (((val) < 0) ? (*retval = -1), -(val) : (*retval = (val)), EOK)
 
 struct {
 	unsigned port;
@@ -186,8 +188,8 @@ static int generic_open(file_t *file)
 		return EIO;
 
 	/* FIXME: agree on sign convention and meaning? */
-	if (msg.o.io.err)
-		return EIO;
+	if (msg.o.io.err < 0)
+		return -msg.o.io.err;
 
 	return EOK;
 }
@@ -234,10 +236,7 @@ static int generic_write(file_t *file, ssize_t *retval, void *data, size_t size)
 		return EIO;
 
 	/* FIXME: agree on sign convention and meaning? */
-	if (msg.o.io.err)
-		return EIO;
-
-	return EOK;
+	SYSCALL_RET(msg.o.io.err);
 }
 
 
@@ -245,11 +244,11 @@ static int generic_read(file_t *file, ssize_t *retval, void *data, size_t size)
 {
 	msg_t msg;
 
-	msg.i.data = data;
-	msg.i.size = size;
+	msg.i.data = NULL;
+	msg.i.size = 0;
 
-	msg.o.data = NULL;
-	msg.o.size = 0;
+	msg.o.data = data;
+	msg.o.size = size;
 
 	msg.type = mtRead;
 	msg.i.io.oid = file->oid;
@@ -260,9 +259,13 @@ static int generic_read(file_t *file, ssize_t *retval, void *data, size_t size)
 		return EIO;
 
 	/* FIXME: agree on sign convention and meaning? */
-	if (msg.o.io.err)
-		return EIO;
 
+	if (msg.o.io.err < 0) {
+		*retval = -1;
+		return -msg.o.io.err;
+	}
+
+	*retval = msg.o.io.err;
 	return EOK;
 }
 
@@ -291,6 +294,7 @@ static void file_unlock(file_t *f)
 
 static void file_destroy(file_t *f)
 {
+	f->ops->close(f);
 	resourceDestroy(f->lock);
 	free(f);
 }
@@ -347,7 +351,7 @@ static int _fd_alloc(process_t *p, int fd)
 }
 
 
-static int _file_new(process_t *p, oid_t *oid, int *fd)
+static int _file_new(process_t *p, int *fd)
 {
 	file_t *f;
 	int newfd;
@@ -401,11 +405,11 @@ static int _file_close(process_t *p, int fd)
 }
 
 
-static int file_new(process_t *p, oid_t *oid, int *fd)
+static int file_new(process_t *p, int *fd)
 {
 	int errno;
 	process_lock(p);
-	errno = _file_new(p, oid, fd);
+	errno = _file_new(p, fd);
 	process_unlock(p);
 	return errno;
 }
@@ -458,10 +462,6 @@ static node_t *node_get(oid_t *oid)
 
 	return node;
 }
-
-
-#define POSIX_RET(val, err) return (*retval = (val), (err))
-#define SYSCALL_RET(val) return (((val) < 0) ? (*retval = -1), -(val) : (*retval = (val)), EOK)
 
 
 /* /dev/zero */
@@ -584,7 +584,7 @@ static int posix_open(process_t *p, char *path, int oflag, mode_t mode, int *ret
 	if (lookup(path, NULL, &oid) < 0)
 		POSIX_RET(-1, ENOENT);
 
-	if ((errno = file_new(p, &oid, &fd)))
+	if ((errno = file_new(p, &fd)))
 		POSIX_RET(-1, errno);
 
 	file = file_get(p, fd);
@@ -610,7 +610,12 @@ static int posix_open(process_t *p, char *path, int oflag, mode_t mode, int *ret
 
 static int posix_close(process_t *p, int fd, int *retval)
 {
-	return EOK;
+	int errno = file_close(p, fd);
+
+	if (errno)
+		POSIX_RET(-1, errno);
+
+	POSIX_RET(0, EOK);
 }
 
 

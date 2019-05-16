@@ -95,7 +95,7 @@ int px_read(ssize_t *retval, int fd, void *buf, size_t nbyte)
 }
 
 
-int px_open(ssize_t *retval, const char *path, int oflag, mode_t mode)
+int px_open(int *retval, const char *path, int oflag, mode_t mode)
 {
 	int err;
 	msg_t msg;
