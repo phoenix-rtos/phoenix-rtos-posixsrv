@@ -12,7 +12,11 @@
 	ID(dup2) \
 	ID(pipe) \
 	ID(recvfrom) \
-	ID(execve)
+	ID(execve) \
+	ID(vfork) \
+	ID(exit) \
+	ID(waitpid) \
+	ID(getpid)
 
 
 /*
@@ -137,6 +141,38 @@ typedef char posixsrv_execve_i_t[0];
 typedef struct {
 	int retval;
 } posixsrv_execve_o_t;
+
+
+typedef char posixsrv_vfork_i_t[0];
+
+typedef struct {
+	int retval;
+} posixsrv_vfork_o_t;
+
+
+typedef struct {
+	int status;
+} posixsrv_exit_i_t;
+
+typedef char posixsrv_exit_o_t[0];
+
+
+typedef struct {
+	pid_t pid;
+	int options;
+} posixsrv_waitpid_i_t;
+
+typedef struct {
+	pid_t retval;
+	int status;
+} posixsrv_waitpid_o_t;
+
+
+typedef char posixsrv_getpid_i_t[0];
+
+typedef struct {
+	pid_t retval;
+} posixsrv_getpid_o_t;
 
 
 #define POSIXSRV_INPUT_FIELD(name) posixsrv_##name##_i_t name;

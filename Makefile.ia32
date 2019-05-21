@@ -15,7 +15,7 @@ MKDEPFLAGS = $(CFLAGS)
 
 CC = $(CROSS)gcc
 
-CFLAGS += -O2 -g -Wall -Wstrict-prototypes -nostartfiles\
+CFLAGS += -O2 -g -Wall -march=i486 -Wstrict-prototypes -nostartfiles\
 	-m32 -mtune=generic -mno-mmx -mno-sse -fno-pic -fno-pie\
 	-fomit-frame-pointer -fno-strength-reduce
 

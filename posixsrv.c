@@ -16,7 +16,11 @@
 #include <sys/rb.h>
 #include <sys/threads.h>
 #include <sys/types.h>
+#include <sys/list.h>
+#include <sys/wait.h>
 
+#include <fcntl.h>
+#include <signal.h>
 #include <errno.h>
 #include <stdlib.h>
 
@@ -26,6 +30,16 @@
 
 #define POSIX_RET(val, err) return (*retval = (val), (err))
 #define SYSCALL_RET(val) return (((val) < 0) ? (*retval = -1), -(val) : (*retval = (val)), EOK)
+
+#define EBLOCK (-1)
+
+enum { resOk, resBlock, resInvalid };
+
+
+static void file_ref(file_t *f);
+static void posixsrv_postRequest(pool_t *pool, request_t *r);
+static int posixsrv_handleRequest(request_t *r);
+
 
 struct {
 	unsigned port;
@@ -44,6 +58,11 @@ struct {
 	node_t null;
 
 	long long stacks[4][0x400];
+
+	long open_files;
+	long process_count;
+
+	pool_t pool;
 } posixsrv_common;
 
 
@@ -61,9 +80,16 @@ static void proctree_unlock(void)
 }
 
 
+static pid_t process_pid(process_t *p)
+{
+	return p->linkage.id;
+}
+
 static void process_lock(process_t *p)
 {
-	while (mutexLock(p->lock) < 0) ;
+//	if (mutexTry(p->lock) < 0) {
+		while (mutexLock(p->lock) < 0) ;
+//	}
 }
 
 
@@ -76,14 +102,16 @@ static void process_unlock(process_t *p)
 static process_t *process_new(process_t *parent)
 {
 	process_t *p;
+	int fd;
 
 	if ((p = calloc(1, sizeof(*p))) == NULL)
 		return NULL;
 
-	p->refs = 2;
+	p->refs = 1;
+	p->vfork_parent = NULL;
 
 	if (parent != NULL) {
-		p->ppid = parent->pid;
+		p->ppid = process_pid(parent);
 
 		p->pgid = parent->pgid;
 		p->sid = parent->sid;
@@ -101,6 +129,14 @@ static process_t *process_new(process_t *parent)
 		}
 
 		memcpy(p->fds, parent->fds, p->fdcount * sizeof(fildes_t));
+
+		for (fd = 0; fd < p->fdcount; ++fd) {
+			if (p->fds[fd].file != NULL)
+				file_ref(p->fds[fd].file);
+		}
+
+		p->refs++;
+		LIST_ADD(&parent->children, p);
 	}
 	else {
 		p->fdcount = 4;
@@ -113,11 +149,15 @@ static process_t *process_new(process_t *parent)
 
 	mutexCreate(&p->lock);
 
+	__atomic_add_fetch(&posixsrv_common.process_count, 1, __ATOMIC_RELAXED);
+
 	proctree_lock();
-	p->pid = posixsrv_common.nextpid;
+	p->linkage.id = posixsrv_common.nextpid++;
 	idtree_alloc(&posixsrv_common.processes, &p->linkage);
-	if ((posixsrv_common.nextpid = p->pid + 1) > POSIXSRV_MAX_PID)
-		posixsrv_common.nextpid = 1;
+	// if ((posixsrv_common.nextpid = p->pid + 1) > POSIXSRV_MAX_PID)
+	//	posixsrv_common.nextpid = 1;
+
+	printf("%d processes, %d open files\n", posixsrv_common.process_count, posixsrv_common.open_files);
 	proctree_unlock();
 
 	return p;
@@ -128,6 +168,7 @@ static void process_destroy(process_t *p)
 {
 	idtree_remove(&posixsrv_common.processes, &p->linkage);
 	free(p);
+	__atomic_add_fetch(&posixsrv_common.process_count, -1, __ATOMIC_RELAXED);
 }
 
 
@@ -137,7 +178,8 @@ static process_t *process_find(pid_t pid)
 
 	proctree_lock();
 	if ((p = lib_treeof(process_t, linkage, idtree_find(&posixsrv_common.processes, pid))) != NULL)
-		p->refs++;
+		__atomic_add_fetch(&p->refs, 1, __ATOMIC_RELAXED);
+		// p->refs++;
 	proctree_unlock();
 
 	return p;
@@ -152,7 +194,8 @@ static process_t *process_nativeFind(int npid)
 
 	proctree_lock();
 	if ((p = lib_treeof(process_t, native, lib_rbFind(&posixsrv_common.natives, &t.native))) != NULL)
-		p->refs++;
+		__atomic_add_fetch(&p->refs, 1, __ATOMIC_RELAXED);
+//		p->refs++;
 	proctree_unlock();
 
 	return p;
@@ -164,10 +207,29 @@ static void process_put(process_t *p)
 	if (!p)
 		return;
 
-	proctree_lock();
-	if (!--p->refs)
+	if (!__atomic_add_fetch(&p->refs, -1, __ATOMIC_ACQ_REL)) {
+		proctree_lock();
 		process_destroy(p);
-	proctree_unlock();
+		proctree_unlock();
+	}
+
+	// proctree_lock();
+	// if (!--p->refs)
+	// 	process_destroy(p);
+	// proctree_unlock();
+}
+
+
+static void process_ref(process_t *p)
+{
+	if (!p)
+		return;
+
+	__atomic_add_fetch(&p->refs, 1, __ATOMIC_RELAXED);
+
+	// proctree_lock();
+	// ++p->refs;
+	// proctree_unlock();
 }
 
 
@@ -210,8 +272,8 @@ static int generic_close(file_t *file)
 		return EIO;
 
 	/* FIXME: agree on sign convention and meaning? */
-	if (msg.o.io.err)
-		return EIO;
+	if (msg.o.io.err < 0)
+		return -msg.o.io.err;
 
 	return EOK;
 }
@@ -259,14 +321,7 @@ static int generic_read(file_t *file, ssize_t *retval, void *data, size_t size)
 		return EIO;
 
 	/* FIXME: agree on sign convention and meaning? */
-
-	if (msg.o.io.err < 0) {
-		*retval = -1;
-		return -msg.o.io.err;
-	}
-
-	*retval = msg.o.io.err;
-	return EOK;
+	SYSCALL_RET(msg.o.io.err);
 }
 
 
@@ -297,24 +352,31 @@ static void file_destroy(file_t *f)
 	f->ops->close(f);
 	resourceDestroy(f->lock);
 	free(f);
+
+	__atomic_add_fetch(&posixsrv_common.open_files, -1, __ATOMIC_RELAXED);
 }
 
 
 static void file_ref(file_t *f)
 {
-	file_lock(f);
-	++f->refs;
-	file_unlock(f);
+	// file_lock(f);
+	// ++f->refs;
+	// file_unlock(f);
+
+	__atomic_add_fetch(&f->refs, 1, __ATOMIC_RELAXED);
 }
 
 
 static void file_deref(file_t *f)
 {
-	file_lock(f);
-	if (!--f->refs)
+	// file_lock(f);
+	// if (!--f->refs)
+	// 		file_destroy(f);
+	// else
+	// 	file_unlock(f);
+
+	if (!__atomic_add_fetch(&f->refs, -1, __ATOMIC_ACQ_REL))
 		file_destroy(f);
-	else
-		file_unlock(f);
 }
 
 
@@ -377,6 +439,8 @@ static int _file_new(process_t *p, int *fd)
 	f->offset = 0;
 	f->mode = 0;
 	f->status = 0;
+
+	__atomic_add_fetch(&posixsrv_common.open_files, 1, __ATOMIC_RELAXED);
 
 	return EOK;
 }
@@ -610,9 +674,9 @@ static int posix_open(process_t *p, char *path, int oflag, mode_t mode, int *ret
 
 static int posix_close(process_t *p, int fd, int *retval)
 {
-	int errno = file_close(p, fd);
+	int errno;
 
-	if (errno)
+	if ((errno = file_close(p, fd)))
 		POSIX_RET(-1, errno);
 
 	POSIX_RET(0, EOK);
@@ -636,7 +700,7 @@ static int _posix_dup(process_t *p, int fd, int *retval)
 	if (fd < 0 || fd >= p->fdcount)
 		POSIX_RET(-1, EBADF);
 
-	if ((newfd = _fd_alloc(p, fd)) < 0)
+	if ((newfd = _fd_alloc(p, 0)) < 0)
 		POSIX_RET(-1, EMFILE);
 
 	if ((f = _file_get(p, fd)) == NULL)
@@ -667,7 +731,7 @@ static int _posix_dup2(process_t *p, int fd, int fd2, int *retval)
 	if (fd == fd2)
 		POSIX_RET(fd, EOK);
 
-	if (fd2 < 0 || fd2 > p->fdcount)
+	if (fd2 < 0 || fd2 >= p->fdcount)
 		POSIX_RET(-1, EBADF);
 
 	if ((f = _file_get(p, fd)) == NULL)
@@ -731,20 +795,157 @@ static int native_spawn(const char *path, char *const argv[], char *const envp[]
 
 static int posix_execve(process_t *p, const char *path, char *const argv[], char *const envp[], int *retval)
 {
-	int pid;
+	process_t *v;
+	int npid;
+	int fd;
 
 	process_lock(p);
+
+	for (fd = 0; fd < p->fdcount; ++fd) {
+		if (p->fds[fd].file != NULL && p->fds[fd].flags & FD_CLOEXEC)
+			_file_close(p, fd);
+	}
+
+	if ((v = p->vfork_parent) != NULL) {
+		p->vfork_parent = NULL;
+		process_lock(v);
+	}
+
 	proctree_lock();
 
-	if ((pid = native_spawn(path, argv, envp)) > 0) {
+	if ((npid = native_spawn(path, argv, envp)) > 0) {
 		native_unlink(p);
-		native_link(p, pid);
+		native_link(p, npid);
+
+		if (v != NULL)
+			native_link(v, v->npid);
 	}
 
 	proctree_unlock();
+
+	if (v != NULL) {
+		process_unlock(v);
+		process_put(v);
+	}
+
 	process_unlock(p);
 
-	SYSCALL_RET(pid);
+	SYSCALL_RET(npid);
+}
+
+
+static int posix_vfork(process_t *p, int *retval)
+{
+	process_t *c;
+
+	process_lock(p);
+
+	if ((c = process_new(p)) == NULL) {
+		process_unlock(p);
+		POSIX_RET(-1, ENOMEM);
+	}
+
+	process_lock(c);
+
+	process_ref(p);
+	c->vfork_parent = p;
+
+	proctree_lock();
+	native_unlink(p);
+	native_link(c, p->npid);
+	proctree_unlock();
+
+	process_unlock(c);
+	process_unlock(p);
+
+	process_put(c);
+
+	POSIX_RET(process_pid(c), EOK);
+}
+
+
+static void waitpid_wakeup(process_t *p)
+{
+	request_t *r;
+	while ((r = p->waitpid) != NULL) {
+		LIST_REMOVE(&p->waitpid, r);
+		posixsrv_postRequest(&posixsrv_common.pool, r);
+	}
+}
+
+
+static int posix_exit(process_t *p, int status)
+{
+	process_t *parent;
+	int fd;
+	pid_t ppid;
+
+	process_lock(p);
+	for (fd = 0; fd < p->fdcount; ++fd) {
+		if (p->fds[fd].file != NULL)
+			_file_close(p, fd);
+	}
+
+	ppid = p->ppid;
+	p->exit = status;
+	process_unlock(p);
+
+	if ((parent = process_find(ppid)) != NULL) {
+		process_lock(parent);
+		LIST_REMOVE(&parent->children, p);
+		LIST_ADD(&parent->zombies, p);
+		waitpid_wakeup(parent);
+		process_unlock(parent);
+	}
+
+	return EOK;
+}
+
+
+static int waitpid_ok(pid_t pid, process_t *p, process_t *z)
+{
+	return pid == -1 || (!pid && z->pgid == p->pgid) || (pid < 0 && z->pgid == -pid) || pid == process_pid(z);
+}
+
+
+static int waitpid_reap(process_t *z)
+{
+	return z->exit;
+}
+
+
+static int posix_waitpid(process_t *p, pid_t pid, int *status, int options, pid_t *retval)
+{
+	int ret = 0, err = EOK;
+	process_t *z, *reap = NULL;
+
+	process_lock(p);
+
+	if ((z = p->zombies) != NULL) {
+		do {
+			if (waitpid_ok(pid, p, z)) {
+				reap = z;
+				break;
+			}
+		} while ((z = z->next) != p->zombies);
+	}
+
+	if (reap != NULL) {
+		ret = process_pid(reap);
+		LIST_REMOVE(&p->zombies, reap);
+		*status = waitpid_reap(reap);
+		process_put(reap);
+	}
+	else if (p->children == NULL) {
+		err = ECHILD;
+		ret = -1;
+	}
+	else if (!(options & WNOHANG)) {
+		err = EBLOCK;
+	}
+
+	process_unlock(p);
+	POSIX_RET(ret, err);
 }
 
 
@@ -771,124 +972,124 @@ static int posix_init(int pid)
 /* Handler functions */
 
 /* init attaches first process to sender */
-static int handle_init(msg_t *msg)
+static int handle_init(request_t *r)
 {
-	posixsrv_o_t *_o = (void *)msg->o.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
 
-	_o->errno = posix_init(msg->pid);
-	return EOK;
+	_o->errno = posix_init(r->msg.pid);
+	return resOk;
 }
 
 
-static int handle_write(process_t *p, msg_t *msg)
+static int handle_write(request_t *r)
 {
-	posixsrv_i_t *_i = (void *)msg->i.raw;
-	posixsrv_o_t *_o = (void *)msg->o.raw;
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
 
 	int fd = _i->write.fd;
-	void *data = msg->i.data;
-	size_t size = msg->i.size;
+	void *data = r->msg.i.data;
+	size_t size = r->msg.i.size;
 	ssize_t *retval = &_o->write.retval;
 
-	_o->errno = posix_write(p, fd, data, size, retval);
-	return EOK;
+	_o->errno = posix_write(r->process, fd, data, size, retval);
+	return resOk;
 }
 
 
-static int handle_read(process_t *p, msg_t *msg)
+static int handle_read(request_t *r)
 {
-	posixsrv_i_t *_i = (void *)msg->i.raw;
-	posixsrv_o_t *_o = (void *)msg->o.raw;
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
 
 	int fd = _i->read.fd;
-	void *data = msg->o.data;
-	size_t size = msg->o.size;
+	void *data = r->msg.o.data;
+	size_t size = r->msg.o.size;
 	ssize_t *retval = &_o->read.retval;
 
-	_o->errno = posix_read(p, fd, data, size, retval);
-	return EOK;
+	_o->errno = posix_read(r->process, fd, data, size, retval);
+	return resOk;
 }
 
 
-static int handle_open(process_t *p, msg_t *msg)
+static int handle_open(request_t *r)
 {
-	posixsrv_i_t *_i = (void *)msg->i.raw;
-	posixsrv_o_t *_o = (void *)msg->o.raw;
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
 
 	int oflag = _i->open.oflag;
 	mode_t mode = _i->open.mode;
-	char *path = msg->i.data;
+	char *path = r->msg.i.data;
 	int *retval = &_o->open.retval;
 
-	_o->errno = posix_open(p, path, oflag, mode, retval);
-	return EOK;
+	_o->errno = posix_open(r->process, path, oflag, mode, retval);
+	return resOk;
 }
 
 
-static int handle_close(process_t *p, msg_t *msg)
+static int handle_close(request_t *r)
 {
-	posixsrv_i_t *_i = (void *)msg->i.raw;
-	posixsrv_o_t *_o = (void *)msg->o.raw;
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
 
 	int fd = _i->close.fd;
 	ssize_t *retval = &_o->close.retval;
 
-	_o->errno = posix_close(p, fd, retval);
-	return EOK;
+	_o->errno = posix_close(r->process, fd, retval);
+	return resOk;
 }
 
 
-static int handle_pipe(process_t *p, msg_t *msg)
+static int handle_pipe(request_t *r)
 {
-	posixsrv_o_t *_o = (void *)msg->o.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
 
 	int *fd = _o->pipe.fd;
 	int *retval = &_o->pipe.retval;
 
-	_o->errno = posix_pipe(p, fd, retval);
-	return EOK;
+	_o->errno = posix_pipe(r->process, fd, retval);
+	return resOk;
 }
 
 
-static int handle_dup(process_t *p, msg_t *msg)
+static int handle_dup(request_t *r)
 {
-	posixsrv_i_t *_i = (void *)msg->i.raw;
-	posixsrv_o_t *_o = (void *)msg->o.raw;
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
 
 	int fd = _i->dup.fd;
 	int *retval = &_o->dup.retval;
 
-	_o->errno = posix_dup(p, fd, retval);
-	return EOK;
+	_o->errno = posix_dup(r->process, fd, retval);
+	return resOk;
 }
 
 
-static int handle_dup2(process_t *p, msg_t *msg)
+static int handle_dup2(request_t *r)
 {
-	posixsrv_i_t *_i = (void *)msg->i.raw;
-	posixsrv_o_t *_o = (void *)msg->o.raw;
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
 
 	int fd1 = _i->dup2.fd1;
 	int fd2 = _i->dup2.fd2;
 	int *retval = &_o->dup2.retval;
 
-	_o->errno = posix_dup2(p, fd1, fd2, retval);
-	return EOK;
+	_o->errno = posix_dup2(r->process, fd1, fd2, retval);
+	return resOk;
 }
 
 
-static int handle_recvfrom(process_t *p, msg_t *msg)
+static int handle_recvfrom(request_t *r)
 {
-	return -ENOSYS;
+	return resOk;
 }
 
 
-static int handle_execve(process_t *p, msg_t *msg)
+static int handle_execve(request_t *r)
 {
-	posixsrv_o_t *_o = (void *)msg->o.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
 	int *retval = &_o->execve.retval;
 
-	size_t size = msg->i.size;
+	size_t size = r->msg.i.size;
 	char *data;
 	char *path;
 	char **argv;
@@ -904,10 +1105,10 @@ static int handle_execve(process_t *p, msg_t *msg)
 	if ((data = malloc(size)) == NULL) {
 		_o->errno = ENOMEM;
 		_o->execve.retval = -1;
-		return -ENOMEM;
+		return resOk;
 	}
 
-	memcpy(data, msg->i.data, size);
+	memcpy(data, r->msg.i.data, size);
 
 	path = data;
 	argv0 = s = path + strlen(path) + 1;
@@ -933,7 +1134,7 @@ static int handle_execve(process_t *p, msg_t *msg)
 
 		_o->errno = ENOMEM;
 		_o->execve.retval = -1;
-		return -ENOMEM;
+		return resOk;
 	}
 
 	if ((envp = malloc((envc + 1) * sizeof(char *))) == NULL) {
@@ -942,7 +1143,7 @@ static int handle_execve(process_t *p, msg_t *msg)
 
 		_o->errno = ENOMEM;
 		_o->execve.retval = -1;
-		return -ENOMEM;
+		return resOk;
 	}
 
 	s = argv0;
@@ -961,7 +1162,7 @@ static int handle_execve(process_t *p, msg_t *msg)
 
 	envp[envc] = NULL;
 
-	_o->errno = posix_execve(p, path, argv, envp, retval);
+	_o->errno = posix_execve(r->process, path, argv, envp, retval);
 
 	/* data, argv & envp are consumed by posix_execve on success */
 	if (_o->errno) {
@@ -970,34 +1171,85 @@ static int handle_execve(process_t *p, msg_t *msg)
 		free(envp);
 	}
 
-	return EOK;
+	return resOk;
 }
+
+
+static int handle_vfork(request_t *r)
+{
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+	int *retval = &_o->vfork.retval;
+
+	_o->errno = posix_vfork(r->process, retval);
+	return resOk;
+}
+
+
+static int handle_exit(request_t *r)
+{
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+	int status = _i->exit.status;
+
+	_o->errno = posix_exit(r->process, status);
+	return resOk;
+}
+
+
+static int handle_waitpid(request_t *r)
+{
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	pid_t pid = _i->waitpid.pid;
+	int options = _i->waitpid.options;
+	int *status = &_o->waitpid.status;
+	pid_t *retval = &_o->waitpid.retval;
+
+	if ((_o->errno = posix_waitpid(r->process, pid, status, options, retval)) == EBLOCK) {
+		r->cont = posixsrv_handleRequest;
+		LIST_ADD(&r->process->waitpid, r);
+		return resBlock;
+	}
+
+	return resOk;
+}
+
+
+static int handle_getpid(request_t *r)
+{
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+	pid_t *retval = &_o->getpid.retval;
+
+	*retval = process_pid(r->process);
+	_o->errno = EOK;
+
+	return resOk;
+}
+
 
 
 /* Interface threads */
 
-static int posixsrv_handleMsg(msg_t *msg)
+static int posixsrv_handleRequest(request_t *r)
 {
 	int err;
-	process_t *process = process_nativeFind(msg->pid);
 
 #define POSIXSRV_CASE(name) \
-	case posixsrv_##name: err = process ? handle_##name(process, msg) : -ENOENT; break;
+	case posixsrv_##name: err = r->process != NULL ? handle_##name(r) : resInvalid; break;
 
-	switch (msg->type) {
+	switch (r->msg.type) {
 		case posixsrv_init:
-			err = handle_init(msg);
+			err = handle_init(r);
 			break;
 
 		POSIXSRV_CALLS(POSIXSRV_CASE)
 		default:
-			err = -EINVAL;
+			err = resInvalid;
 			break;
 	}
-
 #undef POSIXSRV_CASE
 
-	process_put(process);
 	return err;
 }
 
@@ -1018,51 +1270,88 @@ static void pool_unlock(pool_t *pool)
 
 static void pool_waitEmpty(pool_t *pool)
 {
-	condWait(pool->empty, pool->lock, 0);
+	condWait(pool->cond, pool->lock, 0);
 }
 
 
-static void pool_waitFull(pool_t *pool)
+static request_t *posixsrv_newRequest(pool_t *pool)
 {
-	condWait(pool->full, pool->lock, 0);
+	request_t *r;
+
+	if ((r = malloc(sizeof(*r))) != NULL) {
+		r->cont = posixsrv_handleRequest;
+		r->process = NULL;
+		r->data = NULL;
+	}
+
+	return r;
+}
+
+
+static void posixsrv_freeRequest(pool_t *pool, request_t *r)
+{
+	process_put(r->process);
+	free(r);
+}
+
+
+static void posixsrv_postRequest(pool_t *pool, request_t *r)
+{
+	pool_lock(pool);
+	LIST_ADD(&pool->requests, r);
+	pool_unlock(pool);
+	condSignal(pool->cond);
+}
+
+
+static request_t *posixsrv_getRequest(pool_t *pool)
+{
+	request_t *r;
+	pool_lock(pool);
+	while ((r = pool->requests) == NULL)
+		pool_waitEmpty(pool);
+
+	LIST_REMOVE(&pool->requests, r);
+	pool_unlock(pool);
+
+	if (r->process == NULL)
+		r->process = process_nativeFind(r->msg.pid);
+
+	return r;
 }
 
 
 static void posixsrv_poolThread(void *arg)
 {
 	pool_t *pool = arg;
-	msg_t msg;
-	unsigned rid;
+	request_t *r;
+	int res;
 
 	pool_lock(pool);
 	pool->count++;
 	pool_unlock(pool);
 
 	for (;;) {
-		rid = 0;
+		r = posixsrv_getRequest(pool);
 
-		pool_lock(pool);
-		pool->free++;
+		priority(r->msg.priority);
+		res = r->cont(r);
 
-		while (pool->msg != NULL)
-			pool_waitFull(pool);
+		switch (res) {
+			case resInvalid:
+				kill(r->msg.pid, SIGSYS);
 
-		pool->msg = &msg;
-		pool->rid = &rid;
+				/* fallthrough */
+			case resOk:
+				msgRespond(pool->port, &r->msg, r->rid);
+				posixsrv_freeRequest(pool, r);
+				break;
 
-		condSignal(pool->empty);
+			case resBlock:
+				break;
+		}
 
-		while (!rid)
-			pool_waitEmpty(pool);
-
-		pool->free--;
-		pool_unlock(pool);
-
-		priority(msg.priority);
-		posixsrv_handleMsg(&msg);
 		priority(pool->priority);
-
-		msgRespond(pool->port, &msg, rid);
 	}
 }
 
@@ -1070,27 +1359,21 @@ static void posixsrv_poolThread(void *arg)
 static void posixsrv_msgThread(void *arg)
 {
 	pool_t *pool = arg;
-	msg_t *msg = NULL;
-	unsigned *rid = NULL;
+	request_t *r;
+	int err;
 
 	for (;;) {
-		pool_lock(pool);
-		while ((msg = pool->msg) == NULL) {
-			/* TODO: spawn new thread */
-			pool_waitEmpty(pool);
-		}
-		rid = pool->rid;
+		while ((r = posixsrv_newRequest(pool)) == NULL)
+			usleep(100000);
 
-		pool->msg = NULL;
-		pool->rid = NULL;
+		while ((err = msgRecv(pool->port, &r->msg, &r->rid)) < 0) {
+			if (err != -EINTR)
+				usleep(50000);
 
-		pool_unlock(pool);
-		condSignal(pool->full);
-
-		if (msgRecv(pool->port, msg, rid) < 0)
 			continue;
+		}
 
-		condSignal(pool->empty);
+		posixsrv_postRequest(pool, r);
 	}
 }
 
@@ -1110,15 +1393,13 @@ static void init(void)
 static void pool_init(pool_t *pool, unsigned port)
 {
 	mutexCreate(&pool->lock);
-	condCreate(&pool->full);
-	condCreate(&pool->empty);
+	condCreate(&pool->cond);
 	pool->priority = 1;
 	pool->max = pool->min = sizeof(posixsrv_common.stacks) / sizeof(posixsrv_common.stacks[0]);
 	pool->free = 0;
 	pool->count = 0;
 	pool->port = port;
-	pool->rid = NULL;
-	pool->msg = NULL;
+	pool->requests = NULL;
 }
 
 
@@ -1136,17 +1417,17 @@ static void special_init(void)
 
 int main(int argc, char **argv)
 {
-	pool_t pool;
 	int i;
+	pool_t *pool = &posixsrv_common.pool;
 
 	init();
 	special_init();
-	pool_init(&pool, posixsrv_common.port);
+	pool_init(pool, posixsrv_common.port);
 
-	for (i = 0; i < pool.min; ++i)
-		beginthread(posixsrv_poolThread, pool.priority, posixsrv_common.stacks[i], sizeof(posixsrv_common.stacks[i]), &pool);
+	for (i = 0; i < pool->min; ++i)
+		beginthread(posixsrv_poolThread, pool->priority, posixsrv_common.stacks[i], sizeof(posixsrv_common.stacks[i]), pool);
 
-	priority(pool.priority);
-	posixsrv_msgThread(&pool);
+	priority(pool->priority);
+	posixsrv_msgThread(pool);
 	return 0;
 }

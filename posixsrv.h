@@ -32,15 +32,31 @@ typedef struct {
 } fildes_t;
 
 
-typedef struct {
+typedef struct _request_t {
+	struct _request_t *next, *prev;
+
+	msg_t msg;
+	unsigned rid;
+
+	struct _process_t *process;
+	int (*cont)(struct _request_t *r);
+	void *data;
+} request_t;
+
+
+typedef struct _process_t {
 	idnode_t linkage;
 	handle_t lock;
 	unsigned refs;
 
+	struct _process_t *children;
+	struct _process_t *zombies;
+	struct _process_t *next;
+	struct _process_t *prev;
+
 	int npid;
 	rbnode_t native;
 
-	pid_t pid;
 	pid_t ppid;
 	pid_t pgid;
 	pid_t sid;
@@ -53,6 +69,11 @@ typedef struct {
 
 	unsigned fdcount;
 	fildes_t *fds;
+
+	struct _process_t *vfork_parent;
+	int exit;
+
+	request_t *waitpid;
 } process_t;
 
 
@@ -66,8 +87,7 @@ struct _file_ops_t {
 
 typedef struct {
 	handle_t lock;
-	handle_t full;
-	handle_t empty;
+	handle_t cond;
 	unsigned priority;
 
 	unsigned short max;
@@ -76,8 +96,7 @@ typedef struct {
 	unsigned short count;
 
 	unsigned port;
-	unsigned *rid;
-	msg_t *msg;
+	request_t *requests;
 } pool_t;
 
 
