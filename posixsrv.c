@@ -374,6 +374,8 @@ int main(int argc, char **argv)
 	if (tmpfile_init() < 0)
 		fail("tmpfile init");
 
+	openlog("posixsrv", LOG_CONS, LOG_DAEMON);
+
 	beginthread(posixsrvthr, 4, posixsrv_common.stacks[0], sizeof(posixsrv_common.stacks[0]), (void *)events_port);
 
 	for (i = 1; i < sizeof(posixsrv_common.stacks) / sizeof(posixsrv_common.stacks[0]); ++i)

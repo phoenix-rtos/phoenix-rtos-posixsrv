@@ -567,9 +567,12 @@ static int ptm_create(int *id)
 	pty_t *pty;
 	oid_t oid;
 	char path[] = "/dev/pts/" PTS_NAME_PADDING;
+	int err;
 
-	if ((pty = malloc(sizeof(*pty))) == NULL)
+	if ((pty = malloc(sizeof(*pty))) == NULL) {
+		log_error("ptm_create: malloc()");
 		return -ENOMEM;
+	}
 
 	pty->ops.arg = pty;
 
@@ -584,6 +587,7 @@ static int ptm_create(int *id)
 	condCreate(&pty->cond);
 
 	if (libtty_init(&pty->tty, &pty->ops, SIZE_PAGE) < 0) {
+		log_error("libtty_init");
 		free(pty);
 		return -ENOMEM;
 	}
@@ -600,7 +604,13 @@ static int ptm_create(int *id)
 	snprintf(path + sizeof("/dev/pts"), sizeof(PTS_NAME_PADDING), "%d", (int)oid.id);
 
 	object_put(&pty->master);
-	return create_dev(&oid, path);
+
+	if ((err = create_dev(&oid, path)) < 0) {
+		log_error("create_dev(): %s", strerror(err));
+		return err;
+	}
+
+	return EOK;
 }
 
 #undef PTS_NAME_PADDING

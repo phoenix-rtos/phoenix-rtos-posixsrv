@@ -19,9 +19,15 @@
 #include <posix/utils.h>
 #include <posix/idtree.h>
 #include <libtty.h>
+#include <syslog.h>
 
 #define PIPE_BUFSZ 0x1000
 
+#define log_sev(sev, fmt, ...) syslog(sev, __FILE__ ":%d %s: " fmt, __LINE__, __func__, ##__VA_ARGS__)
+#define log_debug(fmt, ...) log_sev(LOG_DEBUG, fmt, ##__VA_ARGS__)
+#define log_info(fmt, ...)  log_sev(LOG_INFO, fmt, ##__VA_ARGS__)
+#define log_warn(fmt, ...)  log_sev(LOG_WARNING, fmt, ##__VA_ARGS__)
+#define log_error(fmt, ...) log_sev(LOG_ERR, fmt, ##__VA_ARGS__)
 
 typedef struct request_t {
 	struct request_t *next, *prev;
