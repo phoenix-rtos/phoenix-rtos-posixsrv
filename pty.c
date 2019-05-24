@@ -51,6 +51,7 @@ static handler_t ptm_write_op, ptm_read_op, ptm_close_op, ptm_devctl_op, ptm_get
 static handler_t ptmx_open_op;
 
 static void ptm_destroy(object_t *o);
+static void pts_destroy(object_t *o);
 
 static void pts_timeout(request_t *r);
 
@@ -65,6 +66,7 @@ static operations_t pts_ops = {
 	.devctl = pts_devctl_op,
 	.release = NULL,
 	.timeout = pts_timeout,
+	.release = pts_destroy,
 };
 
 
@@ -92,7 +94,6 @@ typedef struct {
 	libtty_callbacks_t ops;
 	unsigned state;
 	unsigned short evmask;
-	pid_t slave_pid;
 	int slave_refs;
 
 	request_t *read_master;
@@ -137,16 +138,36 @@ static inline pty_t *pty_slave(object_t *slave)
 }
 
 
-static void ptm_destroy(object_t *o)
+static void pty_destroy(pty_t *pty)
 {
-	PTY_TRACE("destroying master %d", object_id(o));
+	if (pty->slave_refs || pty->slave.refs || pty->master.refs)
+		log_error("(%d): %d slave refs, %d slave object refs, %d master object refs", object_id(&pty->master), pty->slave_refs, pty->slave.refs, pty->master.refs);
+
+	libtty_destroy(&pty->tty);
+	resourceDestroy(pty->mutex);
+	resourceDestroy(pty->cond);
+	free(pty);
+}
+
+
+static void pts_destroy(object_t *o)
+{
+	pty_t *pty = pty_slave(o);
+
+	if ((pty->state & MASTER_OPEN) || pty->master.refs)
+		log_error("(%d): %d slave refs, %d slave object refs, %d master object refs", object_id(&pty->master), pty->slave_refs, pty->slave.refs, pty->master.refs);
+
+	pty_destroy(pty);
+}
+
+
+static void unlink_pts(pty_t *pty)
+{
+	int len;
 	char buf[32];
 	msg_t msg;
-	int len;
-	pty_t *pty = pty_master(o);
 
 	len = snprintf(buf, sizeof(buf), "%d", object_id(&pty->slave));
-
 	memset(&msg, 0, sizeof(msg));
 
 	if (lookup("/dev/pts", NULL, &msg.i.ln.dir) == EOK) {
@@ -157,18 +178,19 @@ static void ptm_destroy(object_t *o)
 
 		msgSend(msg.i.ln.dir.port, &msg);
 	}
+}
 
-	libtty_close(&pty->tty);
+
+static void ptm_destroy(object_t *o)
+{
+	pty_t *pty = pty_master(o);
 
 	mutexLock(pty->mutex);
-	pty->state |= PTY_CLOSING;
+	if (!pty->slave_refs)
+		object_destroy(&pty->slave);
 	mutexUnlock(pty->mutex);
 
-	libtty_destroy(&pty->tty);
-
-	resourceDestroy(pty->mutex);
-	resourceDestroy(pty->cond);
-	free(o);
+	object_put(&pty->slave);
 }
 
 
@@ -255,22 +277,20 @@ static request_t *pts_open_op(object_t *o, request_t *r)
 {
 	PTY_TRACE("pts_open(%d)", object_id(o));
 	pty_t *pty = pty_slave(o);
+	int err = EOK;
 
 	mutexLock(pty->mutex);
-	if (pty->state & PTY_CLOSING) {
-		rq_setResponse(r, -EPIPE);
-	}
-	else if (pty->state & SLAVE_LOCKED) {
-		rq_setResponse(r, -EACCES);
-	}
-	else {
-		pty->state |= SLAVE_OPEN;
+
+	if (pty->state & PTY_CLOSING)
+		err = -EPIPE;
+	else if (pty->state & SLAVE_LOCKED)
+		err = -EACCES;
+	else
 		pty->slave_refs++;
-		pty->slave_pid = r->msg.pid; /* FIXME */
-		rq_setResponse(r, EOK);
-	}
+
 	mutexUnlock(pty->mutex);
 
+	rq_setResponse(r, err);
 	return r;
 }
 
@@ -279,19 +299,24 @@ static request_t *pts_close_op(object_t *o, request_t *r)
 {
 	PTY_TRACE("pts_close(%d)", object_id(o));
 	pty_t *pty = pty_slave(o);
+	int err = EOK;
 
 	mutexLock(pty->mutex);
-	if (pty->state & SLAVE_OPEN) {
-		if (!--pty->slave_refs) {
-			pty->state &= ~SLAVE_OPEN;
-			pty_cancelRequests(pty);
-		}
-		rq_setResponse(r, EOK);
-	} else {
-		rq_setResponse(r, -EACCES);
+
+	if (!pty->slave_refs) {
+		log_warn("ref underflow");
+		err = -EACCES;
 	}
+	else if (!--pty->slave_refs) {
+		pty_cancelRequests(pty);
+
+		if (pty->state & PTY_CLOSING)
+			object_destroy(&pty->slave);
+	}
+
 	mutexUnlock(pty->mutex);
 
+	rq_setResponse(r, err);
 	return r;
 }
 
@@ -416,21 +441,29 @@ static request_t *ptm_read_op(object_t *o, request_t *r)
 
 static request_t *ptm_close_op(object_t *o, request_t *r)
 {
-	PTY_TRACE("ptm_close(%d)", object_id(o));
-
 	pty_t *pty = pty_master(o);
+	int err = EOK;
 
-	pty->state &= ~MASTER_OPEN;
-	object_destroy(&pty->slave);
-	pty_cancelRequests(pty);
-	object_put(&pty->slave);
+	mutexLock(pty->mutex);
+	if (!(pty->state & MASTER_OPEN)) {
+		log_error("master not open");
+		err = -EINVAL;
+	}
+	else {
+		pty->state &= ~MASTER_OPEN;
+		pty->state |= PTY_CLOSING;
 
-	libtty_signal_pgrp(&pty->tty, SIGHUP);
-	object_destroy(o);
+		pty_cancelRequests(pty);
+		unlink_pts(pty);
 
-	PTY_TRACE("ptm_close(%d): %d slave refs, %d slave object refs, %d master object refs", object_id(o), pty->slave_refs,
-		pty->slave.refs, pty->master.refs);
+		libtty_signal_pgrp(&pty->tty, SIGHUP);
+		libtty_close(&pty->tty);
+		object_destroy(&pty->master);
 
+	}
+	mutexUnlock(pty->mutex);
+
+	rq_setResponse(r, err);
 	return r;
 }
 
@@ -538,6 +571,10 @@ static request_t *ptm_devctl_op(object_t *o, request_t *r)
 			err = EOK;
 		}
 		break;
+
+	default:
+		log_error("invalid request %x", request);
+		break;
 	}
 
 	ioctl_setResponse(&r->msg, request, err, out_data);
@@ -604,6 +641,7 @@ static int ptm_create(int *id)
 	snprintf(path + sizeof("/dev/pts"), sizeof(PTS_NAME_PADDING), "%d", (int)oid.id);
 
 	object_put(&pty->master);
+/*	object_put(&pty->slave); - Keep one reference for the master */
 
 	if ((err = create_dev(&oid, path)) < 0) {
 		log_error("create_dev(): %s", strerror(err));
