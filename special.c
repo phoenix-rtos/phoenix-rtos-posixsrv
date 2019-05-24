@@ -117,6 +117,7 @@ static operations_t null_ops = {
 	.read = null_read_op,
 	.write = null_write_op,
 	.getattr = null_getattr_op,
+	.truncate = nothing_op,
 	.release = (void *)free,
 };
 
