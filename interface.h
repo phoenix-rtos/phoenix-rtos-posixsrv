@@ -16,13 +16,19 @@
 	ID(vfork) \
 	ID(exit) \
 	ID(waitpid) \
-	ID(getpid)
+	ID(getpid) \
+	ID(ftruncate) \
+	ID(link) \
+	ID(unlink) \
+	ID(setsid) \
+	ID(setpgid) \
+	ID(getsid) \
+	ID(getpgid) \
+	ID(getppid)
+
 
 
 /*
-	ID(link) \
-	ID(unlink) \
-	ID(ftruncate) \
 	ID(lseek) \
 	ID(mkfifo) \
 	ID(chmod) \
@@ -173,6 +179,72 @@ typedef char posixsrv_getpid_i_t[0];
 typedef struct {
 	pid_t retval;
 } posixsrv_getpid_o_t;
+
+
+typedef struct {
+	int fd;
+	off_t length;
+} posixsrv_ftruncate_i_t;
+
+typedef struct {
+	int retval;
+} posixsrv_ftruncate_o_t;
+
+
+typedef char posixsrv_link_i_t[0];
+
+typedef struct {
+	int retval;
+} posixsrv_link_o_t;
+
+
+typedef char posixsrv_unlink_i_t[0];
+
+typedef struct {
+	int retval;
+} posixsrv_unlink_o_t;
+
+
+typedef char posixsrv_setsid_i_t[0];
+
+typedef struct {
+	pid_t retval;
+} posixsrv_setsid_o_t;
+
+
+typedef struct {
+	pid_t pid;
+	pid_t pgid;
+} posixsrv_setpgid_i_t;
+
+typedef struct {
+	int retval;
+} posixsrv_setpgid_o_t;
+
+
+typedef struct {
+	pid_t pid;
+} posixsrv_getsid_i_t;
+
+typedef struct {
+	pid_t retval;
+} posixsrv_getsid_o_t;
+
+
+typedef struct {
+	pid_t pid;
+} posixsrv_getpgid_i_t;
+
+typedef struct {
+	pid_t retval;
+} posixsrv_getpgid_o_t;
+
+
+typedef char posixsrv_getppid_i_t[0];
+
+typedef struct {
+	pid_t retval;
+} posixsrv_getppid_o_t;
 
 
 #define POSIXSRV_INPUT_FIELD(name) posixsrv_##name##_i_t name;

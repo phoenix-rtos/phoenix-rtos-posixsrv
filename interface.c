@@ -443,7 +443,7 @@ int px_waitpid(pid_t *retval, pid_t pid, int *status, int options)
 }
 
 
-int px_getpid(ssize_t *retval, int fd)
+int px_getpid(ssize_t *retval)
 {
 	int err;
 	msg_t msg;
@@ -462,5 +462,219 @@ int px_getpid(ssize_t *retval, int fd)
 	}
 
 	*retval = _o->getpid.retval;
+	return _o->errno;
+}
+
+
+int px_ftruncate(int *retval, int fd, off_t length)
+{
+	int err;
+	msg_t msg;
+	posixsrv_i_t *_i = (void *)msg.i.raw;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_ftruncate;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	_i->ftruncate.fd = fd;
+	_i->ftruncate.length = length;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
+		*retval = -1;
+		return -err;
+	}
+
+	*retval = _o->ftruncate.retval;
+	return _o->errno;
+}
+
+
+int px_unlink(int *retval, const char *path)
+{
+	int err;
+	msg_t msg;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_unlink;
+
+	msg.i.data = path;
+	msg.i.size = strlen(path) + 1;
+
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
+		*retval = -1;
+		return -err;
+	}
+
+	*retval = _o->unlink.retval;
+	return _o->errno;
+}
+
+
+int px_link(int *retval, const char *path1, const char *path2)
+{
+	int err;
+	msg_t msg;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+	int len1, len2;
+
+	msg.type = posixsrv_link;
+
+	len1 = strlen(path1) + 1;
+	len2 = strlen(path2) + 1;
+
+	if ((msg.i.data = calloc(len1 + len2, 1)) == NULL) {
+		*retval = -1;
+		return -ENOMEM;
+	}
+
+	msg.i.size = len1 + len2;
+
+	strcpy(msg.i.data, path1);
+	strcpy(msg.i.data + len1, path2);
+
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
+		*retval = -1;
+		_o->errno = -err;
+	}
+	else {
+		*retval = _o->link.retval;
+	}
+
+	free(msg.i.data);
+	return _o->errno;
+}
+
+
+int px_setsid(pid_t *retval)
+{
+	int err;
+	msg_t msg;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_setsid;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
+		*retval = -1;
+		return -err;
+	}
+
+	*retval = _o->setsid.retval;
+	return _o->errno;
+}
+
+
+int px_setpgid(pid_t *retval, pid_t pid, pid_t pgid)
+{
+	int err;
+	msg_t msg;
+	posixsrv_i_t *_i = (void *)msg.i.raw;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_setpgid;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	_i->setpgid.pid = pid;
+	_i->setpgid.pgid = pgid;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
+		*retval = -1;
+		return -err;
+	}
+
+	*retval = _o->setpgid.retval;
+	return _o->errno;
+}
+
+
+int px_getsid(pid_t *retval, pid_t pid)
+{
+	int err;
+	msg_t msg;
+	posixsrv_i_t *_i = (void *)msg.i.raw;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_getsid;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	_i->getsid.pid = pid;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
+		*retval = -1;
+		return -err;
+	}
+
+	*retval = _o->getsid.retval;
+	return _o->errno;
+}
+
+
+int px_getpgid(pid_t *retval, pid_t pid)
+{
+	int err;
+	msg_t msg;
+	posixsrv_i_t *_i = (void *)msg.i.raw;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_getpgid;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	_i->getpgid.pid = pid;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
+		*retval = -1;
+		return -err;
+	}
+
+	*retval = _o->getpgid.retval;
+	return _o->errno;
+}
+
+
+int px_getppid(pid_t *retval, pid_t pid)
+{
+	int err;
+	msg_t msg;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_getppid;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
+		*retval = -1;
+		return -err;
+	}
+
+	*retval = _o->getppid.retval;
 	return _o->errno;
 }

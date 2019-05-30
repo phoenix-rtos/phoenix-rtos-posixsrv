@@ -51,15 +51,15 @@ typedef struct _process_t {
 
 	struct _process_t *children;
 	struct _process_t *zombies;
-	struct _process_t *next;
-	struct _process_t *prev;
+	struct _process_t *next, *prev;
+
+	struct _process_group_t *group;
+	struct _process_t *pg_next, *pg_prev;
 
 	int npid;
 	rbnode_t native;
 
 	pid_t ppid;
-	pid_t pgid;
-	pid_t sid;
 	uid_t uid;
 	uid_t euid;
 	gid_t gid;
@@ -77,11 +77,28 @@ typedef struct _process_t {
 } process_t;
 
 
+typedef struct _process_group_t {
+	pid_t id;
+	process_t *members;
+
+	struct _session_t *session;
+	struct _process_group_t *next, *prev;
+} process_group_t;
+
+
+typedef struct _session_t {
+	pid_t id;
+	file_t *ctty;
+	process_group_t *members;
+} session_t;
+
+
 struct _file_ops_t {
 	int (*open)(file_t *);
 	int (*close)(file_t *);
 	int (*read)(file_t *, ssize_t *, void *, size_t);
 	int (*write)(file_t *, ssize_t *, void *, size_t);
+	int (*truncate)(file_t *, int *, off_t);
 };
 
 

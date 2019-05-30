@@ -23,6 +23,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "posix/idtree.h"
 #include "interface.h"
@@ -33,12 +34,19 @@
 
 #define EBLOCK (-1)
 
+#define GET_REF(ref) __atomic_add_fetch(ref, 1, __ATOMIC_RELAXED)
+#define PUT_REF(ref) __atomic_add_fetch(ref, -1, __ATOMIC_ACQ_REL)
+
 enum { resOk, resBlock, resInvalid };
 
 
 static void file_ref(file_t *f);
 static void posixsrv_postRequest(pool_t *pool, request_t *r);
 static int posixsrv_handleRequest(request_t *r);
+static int pg_new(process_t *p);
+static int ses_new(process_t *p);
+static void pg_remove(process_t *p);
+static void pg_add(process_group_t *pg, process_t *p);
 
 
 struct {
@@ -57,13 +65,73 @@ struct {
 	node_t zero;
 	node_t null;
 
-	long long stacks[4][0x400];
+	long long stacks[2][0x400];
 
 	long open_files;
 	long process_count;
 
 	pool_t pool;
 } posixsrv_common;
+
+
+/* Utility functions */
+
+static void splitname(char *path, char **base, char **dir)
+{
+	char *slash;
+
+	slash = strrchr(path, '/');
+
+	if (slash == NULL) {
+		*dir = ".";
+		*base = path;
+	}
+	else if (slash == path) {
+		*base = path + 1;
+		*dir = "/";
+	}
+	else {
+		*dir = path;
+		*base = slash + 1;
+		*slash = 0;
+	}
+}
+
+
+int fs_lookup(const char *path, oid_t *node)
+{
+	return -lookup(path, node, NULL);
+}
+
+
+int msg_link(oid_t oid, oid_t dir, const char *name)
+{
+	msg_t msg = {0};
+
+	msg.type = mtLink;
+	msg.i.ln.dir = dir;
+	msg.i.ln.oid = oid;
+
+	msg.i.size = strlen(name) + 1;
+	msg.i.data = name;
+
+	return -msgSend(dir.port, &msg);
+}
+
+
+int msg_unlink(oid_t oid, oid_t dir, const char *name)
+{
+	msg_t msg = {0};
+
+	msg.type = mtUnlink;
+	msg.i.ln.dir = dir;
+	msg.i.ln.oid = oid;
+
+	msg.i.size = strlen(name) + 1;
+	msg.i.data = name;
+
+	return -msgSend(dir.port, &msg);
+}
 
 
 /* Process functions */
@@ -113,8 +181,7 @@ static process_t *process_new(process_t *parent)
 	if (parent != NULL) {
 		p->ppid = process_pid(parent);
 
-		p->pgid = parent->pgid;
-		p->sid = parent->sid;
+		p->group = parent->group;
 		p->uid = parent->uid;
 		p->euid = parent->euid;
 		p->gid = parent->gid;
@@ -139,6 +206,11 @@ static process_t *process_new(process_t *parent)
 		LIST_ADD(&parent->children, p);
 	}
 	else {
+		if (pg_new(p) != EOK || ses_new(p) != EOK) {
+			free(p);
+			return NULL;
+		}
+
 		p->fdcount = 4;
 
 		if ((p->fds = calloc(p->fdcount, sizeof(fildes_t))) == NULL) {
@@ -149,15 +221,17 @@ static process_t *process_new(process_t *parent)
 
 	mutexCreate(&p->lock);
 
-	__atomic_add_fetch(&posixsrv_common.process_count, 1, __ATOMIC_RELAXED);
+	GET_REF(&posixsrv_common.process_count);
 
 	proctree_lock();
+	if (parent != NULL)
+		pg_add(parent->group, p);
+
 	p->linkage.id = posixsrv_common.nextpid++;
 	idtree_alloc(&posixsrv_common.processes, &p->linkage);
 	// if ((posixsrv_common.nextpid = p->pid + 1) > POSIXSRV_MAX_PID)
 	//	posixsrv_common.nextpid = 1;
 
-	printf("%d processes, %d open files\n", posixsrv_common.process_count, posixsrv_common.open_files);
 	proctree_unlock();
 
 	return p;
@@ -166,9 +240,12 @@ static process_t *process_new(process_t *parent)
 
 static void process_destroy(process_t *p)
 {
+	proctree_lock();
 	idtree_remove(&posixsrv_common.processes, &p->linkage);
+	proctree_unlock();
+
 	free(p);
-	__atomic_add_fetch(&posixsrv_common.process_count, -1, __ATOMIC_RELAXED);
+	PUT_REF(&posixsrv_common.process_count);
 }
 
 
@@ -178,8 +255,7 @@ static process_t *process_find(pid_t pid)
 
 	proctree_lock();
 	if ((p = lib_treeof(process_t, linkage, idtree_find(&posixsrv_common.processes, pid))) != NULL)
-		__atomic_add_fetch(&p->refs, 1, __ATOMIC_RELAXED);
-		// p->refs++;
+		GET_REF(&p->refs);
 	proctree_unlock();
 
 	return p;
@@ -194,8 +270,7 @@ static process_t *process_nativeFind(int npid)
 
 	proctree_lock();
 	if ((p = lib_treeof(process_t, native, lib_rbFind(&posixsrv_common.natives, &t.native))) != NULL)
-		__atomic_add_fetch(&p->refs, 1, __ATOMIC_RELAXED);
-//		p->refs++;
+		GET_REF(&p->refs);
 	proctree_unlock();
 
 	return p;
@@ -204,32 +279,125 @@ static process_t *process_nativeFind(int npid)
 
 static void process_put(process_t *p)
 {
-	if (!p)
-		return;
-
-	if (!__atomic_add_fetch(&p->refs, -1, __ATOMIC_ACQ_REL)) {
-		proctree_lock();
+	if (p && !PUT_REF(&p->refs))
 		process_destroy(p);
-		proctree_unlock();
-	}
-
-	// proctree_lock();
-	// if (!--p->refs)
-	// 	process_destroy(p);
-	// proctree_unlock();
 }
 
 
 static void process_ref(process_t *p)
 {
-	if (!p)
-		return;
+	if (p)
+		GET_REF(&p->refs);
+}
 
-	__atomic_add_fetch(&p->refs, 1, __ATOMIC_RELAXED);
 
-	// proctree_lock();
-	// ++p->refs;
-	// proctree_unlock();
+
+/* Session functions */
+
+static void ses_destroy(session_t *ses)
+{
+	free(ses);
+}
+
+
+static int ses_leader(process_t *p)
+{
+	return process_pid(p) == p->group->session->id;
+}
+
+
+static void ses_add(session_t *ses, process_group_t *pg)
+{
+	pg->session = ses;
+	LIST_ADD(&ses->members, pg);
+}
+
+
+static void ses_remove(process_group_t *pg)
+{
+	session_t *ses = pg->session;
+
+	if (ses != NULL) {
+		LIST_REMOVE(&ses->members, pg);
+
+		if (ses->members == NULL)
+			ses_destroy(ses);
+
+		pg->session = NULL;
+	}
+}
+
+
+static int ses_new(process_t *p)
+{
+	session_t *ses;
+
+	if ((ses = calloc(1, sizeof(*ses))) == NULL)
+		return ENOMEM;
+
+	ses->id = process_pid(p);
+	ses_remove(p->group);
+	ses_add(ses, p->group);
+
+	return EOK;
+}
+
+
+
+/* Process group functions */
+
+static void pg_destroy(process_group_t *pg)
+{
+	free(pg);
+}
+
+
+static int pg_leader(process_t *p)
+{
+	return process_pid(p) == p->group->id;
+}
+
+
+static void pg_add(process_group_t *pg, process_t *p)
+{
+	p->group = pg;
+	LIST_ADD_EX(&pg->members, p, pg_next, pg_prev);
+}
+
+
+static void pg_remove(process_t *p)
+{
+	process_group_t *pg = p->group;
+
+	if (pg) {
+		LIST_REMOVE_EX(&pg->members, p, pg_next, pg_prev);
+
+		if (pg->members == NULL) {
+			ses_remove(pg);
+			pg_destroy(pg);
+		}
+
+		p->group = NULL;
+	}
+}
+
+
+static int pg_new(process_t *p)
+{
+	process_group_t *pg;
+
+	if ((pg = calloc(1, sizeof(*pg))) == NULL)
+		return ENOMEM;
+
+	pg->id = process_pid(p);
+
+	if (p->group)
+		ses_add(p->group->session, pg);
+
+	pg_remove(p);
+	pg_add(pg, p);
+
+	return EOK;
 }
 
 
@@ -325,11 +493,34 @@ static int generic_read(file_t *file, ssize_t *retval, void *data, size_t size)
 }
 
 
+static int generic_truncate(file_t *file, int *retval, off_t length)
+{
+	msg_t msg;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	msg.type = mtTruncate;
+	msg.i.io.oid = file->oid;
+	msg.i.io.len = length;
+
+	if (msgSend(file->oid.port, &msg) < 0)
+		return EIO;
+
+	/* FIXME: agree on sign convention and meaning? */
+	SYSCALL_RET(msg.o.io.err);
+}
+
+
 const static file_ops_t generic_ops = {
 	.open = generic_open,
 	.close = generic_close,
 	.read = generic_read,
-	.write = generic_write
+	.write = generic_write,
+	.truncate = generic_truncate,
 };
 
 
@@ -353,29 +544,19 @@ static void file_destroy(file_t *f)
 	resourceDestroy(f->lock);
 	free(f);
 
-	__atomic_add_fetch(&posixsrv_common.open_files, -1, __ATOMIC_RELAXED);
+	PUT_REF(&posixsrv_common.open_files);
 }
 
 
 static void file_ref(file_t *f)
 {
-	// file_lock(f);
-	// ++f->refs;
-	// file_unlock(f);
-
-	__atomic_add_fetch(&f->refs, 1, __ATOMIC_RELAXED);
+	GET_REF(&f->refs);
 }
 
 
 static void file_deref(file_t *f)
 {
-	// file_lock(f);
-	// if (!--f->refs)
-	// 		file_destroy(f);
-	// else
-	// 	file_unlock(f);
-
-	if (!__atomic_add_fetch(&f->refs, -1, __ATOMIC_ACQ_REL))
+	if (!PUT_REF(&f->refs))
 		file_destroy(f);
 }
 
@@ -440,7 +621,7 @@ static int _file_new(process_t *p, int *fd)
 	f->mode = 0;
 	f->status = 0;
 
-	__atomic_add_fetch(&posixsrv_common.open_files, 1, __ATOMIC_RELAXED);
+	GET_REF(&posixsrv_common.open_files);
 
 	return EOK;
 }
@@ -687,7 +868,6 @@ static int posix_close(process_t *p, int fd, int *retval)
 
 static int posix_pipe(process_t *p, int fd[2], ssize_t *retval)
 {
-	debug("pipe\n");
 	return EOK;
 }
 
@@ -888,6 +1068,10 @@ static int posix_exit(process_t *p, int status)
 
 	ppid = p->ppid;
 	p->exit = status;
+
+	proctree_lock();
+	pg_remove(p);
+	proctree_unlock();
 	process_unlock(p);
 
 	if ((parent = process_find(ppid)) != NULL) {
@@ -904,7 +1088,7 @@ static int posix_exit(process_t *p, int status)
 
 static int waitpid_ok(pid_t pid, process_t *p, process_t *z)
 {
-	return pid == -1 || (!pid && z->pgid == p->pgid) || (pid < 0 && z->pgid == -pid) || pid == process_pid(z);
+	return pid == -1 || (!pid && z->group->id == p->group->id) || (pid < 0 && z->group->id == -pid) || pid == process_pid(z);
 }
 
 
@@ -946,6 +1130,251 @@ static int posix_waitpid(process_t *p, pid_t pid, int *status, int options, pid_
 
 	process_unlock(p);
 	POSIX_RET(ret, err);
+}
+
+
+static int posix_ftruncate(process_t *p, int fd, off_t length, int *retval)
+{
+	file_t *f;
+
+	if ((f = file_get(p, fd)) == NULL)
+		POSIX_RET(-1, EBADF);
+
+	errno = f->ops->truncate(f, retval, length);
+	file_deref(f);
+	return errno;
+}
+
+
+static int posix_link(process_t *p, const char *path1, const char *path2, int *retval)
+{
+	int err;
+	char *name, *basename, *dirname;
+	oid_t src, dir;
+
+	name = strdup(path2);
+	splitname(name, &basename, &dirname);
+
+	if ((err = fs_lookup(dirname, &dir)) != EOK)
+		*retval = -1;
+
+	else if ((err = fs_lookup(path1, &src)) != EOK)
+		*retval = -1;
+
+	else if ((err = msg_link(src, dir, basename)) != EOK)
+		*retval = -1;
+
+	else
+		*retval = 0;
+
+	free(name);
+	return err;
+}
+
+
+static int posix_unlink(process_t *p, const char *path, int *retval)
+{
+	int err;
+	char *name, *basename, *dirname;
+	oid_t src, dir;
+
+	name = strdup(path);
+	splitname(name, &basename, &dirname);
+
+	if ((err = fs_lookup(dirname, &dir)) != EOK)
+		*retval = -1;
+
+	else if ((err = fs_lookup(path, &src)) != EOK)
+		*retval = -1;
+
+	else if ((err = msg_unlink(src, dir, basename)) != EOK)
+		*retval = -1;
+
+	else
+		*retval = 0;
+
+	free(name);
+	return err;
+}
+
+
+static int posix_setsid(process_t *p, pid_t *retval)
+{
+	int err = 0;
+
+	process_lock(p);
+	proctree_lock();
+	if (!pg_leader(p)) {
+		if (pg_new(p) != EOK || ses_new(p) != EOK) {
+			err = ENOMEM;
+			*retval = -1;
+		}
+		else {
+			*retval = p->group->session->id;
+		}
+	}
+	else {
+		*retval = -1;
+		err = EPERM;
+	}
+	proctree_unlock();
+	process_unlock(p);
+
+	return err;
+}
+
+
+static int posix_setpgid(process_t *p, pid_t pid, pid_t pgid, int *retval)
+{
+	process_t *s;
+	process_group_t *pg;
+	int err;
+
+	if (pgid < 0) {
+		*retval = -1;
+		return EINVAL;
+	}
+
+	process_lock(p);
+	if (!pid) {
+		pid = process_pid(p);
+		s = p;
+	}
+	else if ((s = p->children) != NULL) {
+		do {
+			if (process_pid(s) == pid)
+				break;
+		} while ((s = s->next) != p->children);
+	}
+
+	if (!s || process_pid(s) != pid) {
+		process_unlock(p);
+		*retval = -1;
+		return ESRCH;
+	}
+
+	proctree_lock();
+	if (ses_leader(s) || s->group->session != p->group->session) {
+		*retval = -1;
+		err = EPERM;
+	}
+	else if (pgid == 0) {
+		pg_new(s);
+
+		*retval = 0;
+		err = EOK;
+	}
+	else {
+		pg = s->group;
+		do {
+			if (pg->id == pgid)
+				break;
+		} while ((pg = pg->next) != s->group);
+
+		if (pg->id == pgid) {
+			pg_remove(s);
+			pg_add(pg, s);
+
+			*retval = 0;
+			err = EOK;
+		}
+		else {
+			*retval = -1;
+			err = EPERM;
+		}
+	}
+	proctree_unlock();
+	process_unlock(p);
+
+	return err;
+}
+
+
+static int posix_getpgid(process_t *p, pid_t pid, pid_t *retval)
+{
+	process_t *s;
+	int err;
+
+	if (pid < 0) {
+		*retval = -1;
+		return EINVAL;
+	}
+
+	if (pid != 0)
+		s = process_find(pid);
+	else
+		s = p;
+
+	if (s == NULL) {
+		*retval = -1;
+		return ESRCH;
+	}
+
+	proctree_lock();
+	if (s->group->session->id != p->group->session->id) {
+		/* NOTE: disallowing this is optional */
+		*retval = -1;
+		err = EPERM;
+	}
+	else {
+		*retval = s->group->id;
+		err = EOK;
+	}
+	proctree_unlock();
+
+	if (pid != 0)
+		process_put(s);
+
+	return err;
+}
+
+
+static int posix_getsid(process_t *p, pid_t pid, pid_t *retval)
+{
+	process_t *s;
+	int err;
+
+	if (pid < 0) {
+		*retval = -1;
+		return EINVAL;
+	}
+
+	if (pid != 0)
+		s = process_find(pid);
+	else
+		s = p;
+
+	if (s == NULL) {
+		*retval = -1;
+		return ESRCH;
+	}
+
+	proctree_lock();
+	if (s->group->session->id != p->group->session->id) {
+		/* NOTE: disallowing this is optional */
+		*retval = -1;
+		err = EPERM;
+	}
+	else {
+		*retval = s->group->session->id;
+		err = EOK;
+	}
+	proctree_unlock();
+
+	if (pid != 0)
+		process_put(s);
+
+	return err;
+}
+
+
+static int posix_getppid(process_t *p, pid_t *retval)
+{
+	process_lock(p);
+	*retval = p->ppid;
+	process_unlock(p);
+
+	return EOK;
 }
 
 
@@ -1224,6 +1653,107 @@ static int handle_getpid(request_t *r)
 	*retval = process_pid(r->process);
 	_o->errno = EOK;
 
+	return resOk;
+}
+
+
+static int handle_link(request_t *r)
+{
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	int *retval = &_o->link.retval;
+	const char *path1 = r->msg.i.data;
+	const char *path2 = r->msg.i.data + strnlen(path1, r->msg.i.size - 2) + 1;
+
+	_o->errno = posix_link(r->process, path1, path2, retval);
+	return resOk;
+}
+
+
+static int handle_unlink(request_t *r)
+{
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	int *retval = &_o->link.retval;
+	const char *path = r->msg.i.data;
+
+	_o->errno = posix_unlink(r->process, path, retval);
+	return resOk;
+}
+
+
+static int handle_ftruncate(request_t *r)
+{
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	int fd = _i->ftruncate.fd;
+	off_t length = _i->ftruncate.length;
+	int *retval = &_o->ftruncate.retval;
+
+	_o->errno = posix_ftruncate(r->process, fd, length, retval);
+	return resOk;
+}
+
+
+static int handle_setsid(request_t *r)
+{
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	pid_t *retval = &_o->setsid.retval;
+
+	_o->errno = posix_setsid(r->process, retval);
+	return resOk;
+}
+
+
+static int handle_setpgid(request_t *r)
+{
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	pid_t *retval = &_o->setsid.retval;
+	pid_t pid = _i->setpgid.pid;
+	pid_t pgid = _i->setpgid.pgid;
+
+	_o->errno = posix_setpgid(r->process, pid, pgid, retval);
+	return resOk;
+}
+
+
+static int handle_getpgid(request_t *r)
+{
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	pid_t *retval = &_o->getpgid.retval;
+	pid_t pid = _i->getpgid.pid;
+
+	_o->errno = posix_getpgid(r->process, pid, retval);
+	return resOk;
+}
+
+
+static int handle_getsid(request_t *r)
+{
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	pid_t *retval = &_o->getsid.retval;
+	pid_t pid = _i->getsid.pid;
+
+	_o->errno = posix_getsid(r->process, pid, retval);
+	return resOk;
+}
+
+
+static int handle_getppid(request_t *r)
+{
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	pid_t *retval = &_o->getsid.retval;
+
+	_o->errno = posix_getppid(r->process, retval);
 	return resOk;
 }
 
