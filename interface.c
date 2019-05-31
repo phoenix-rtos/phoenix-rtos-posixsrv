@@ -42,7 +42,7 @@ int px_init(void)
 	if ((err = msgSend(posixsrv_port, &msg)) < 0)
 		return -err;
 
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -68,7 +68,7 @@ int px_write(ssize_t *retval, int fd, const void *buf, size_t nbyte)
 	}
 
 	*retval = _o->write.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -94,7 +94,7 @@ int px_read(ssize_t *retval, int fd, void *buf, size_t nbyte)
 	}
 
 	*retval = _o->read.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -121,7 +121,7 @@ int px_open(int *retval, const char *path, int oflag, mode_t mode)
 	}
 
 	*retval = _o->open.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -147,7 +147,7 @@ int px_close(ssize_t *retval, int fd)
 	}
 
 	*retval = _o->close.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -179,7 +179,7 @@ int px_recvfrom(ssize_t *retval, int socket, void *buffer, size_t length, int fl
 	}
 
 	*retval = _o->recvfrom.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -205,7 +205,7 @@ int px_dup(ssize_t *retval, int fd)
 	}
 
 	*retval = _o->dup.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -232,7 +232,7 @@ int px_dup2(ssize_t *retval, int fd1, int fd2)
 	}
 
 	*retval = _o->dup2.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -259,7 +259,7 @@ int px_pipe(ssize_t *retval, int fd[2])
 	fd[1] = _o->pipe.fd[1];
 
 	*retval = _o->pipe.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -316,7 +316,7 @@ int px_execve(ssize_t *retval, const char *path, char *const argv[], char *const
 
 	munmap(msg.i.data, (msg.i.size + SIZE_PAGE - 1) & (SIZE_PAGE - 1));
 	*retval = _o->execve.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -340,7 +340,7 @@ int px_vfork(int *retval)
 	}
 
 	*retval = _o->vfork.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -409,7 +409,7 @@ int px_exit(int status)
 	if ((err = msgSend(posixsrv_port, &msg)) < 0)
 		return -err;
 
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -439,7 +439,7 @@ int px_waitpid(pid_t *retval, pid_t pid, int *status, int options)
 		*status = _o->waitpid.status;
 
 	*retval = _o->waitpid.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -462,7 +462,7 @@ int px_getpid(ssize_t *retval)
 	}
 
 	*retval = _o->getpid.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -489,7 +489,7 @@ int px_ftruncate(int *retval, int fd, off_t length)
 	}
 
 	*retval = _o->ftruncate.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -513,7 +513,7 @@ int px_unlink(int *retval, const char *path)
 	}
 
 	*retval = _o->unlink.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -544,14 +544,14 @@ int px_link(int *retval, const char *path1, const char *path2)
 
 	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
 		*retval = -1;
-		_o->errno = -err;
+		_o->err_no = -err;
 	}
 	else {
 		*retval = _o->link.retval;
 	}
 
 	free(msg.i.data);
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -574,7 +574,7 @@ int px_setsid(pid_t *retval)
 	}
 
 	*retval = _o->setsid.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -601,7 +601,7 @@ int px_setpgid(pid_t *retval, pid_t pid, pid_t pgid)
 	}
 
 	*retval = _o->setpgid.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -627,7 +627,7 @@ int px_getsid(pid_t *retval, pid_t pid)
 	}
 
 	*retval = _o->getsid.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -653,7 +653,7 @@ int px_getpgid(pid_t *retval, pid_t pid)
 	}
 
 	*retval = _o->getpgid.retval;
-	return _o->errno;
+	return _o->err_no;
 }
 
 
@@ -676,5 +676,5 @@ int px_getppid(pid_t *retval, pid_t pid)
 	}
 
 	*retval = _o->getppid.retval;
-	return _o->errno;
+	return _o->err_no;
 }

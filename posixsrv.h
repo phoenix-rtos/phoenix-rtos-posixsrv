@@ -1,6 +1,11 @@
 #ifndef _POSIXSRV_POSIXSRV_H_
 #define _POSIXSRV_POSIXSRV_H_
 
+#include <sys/msg.h>
+#include <sys/rb.h>
+#include <sys/types.h>
+
+#include "posix/idtree.h"
 
 #define POSIXSRV_MAX_PID ((1LL << 30) - 1)
 #define POSIXSRV_MAX_FDS 128
@@ -94,10 +99,10 @@ typedef struct _session_t {
 
 
 struct _file_ops_t {
-	int (*open)(file_t *);
+	int (*open)(request_t *, file_t *);
+	int (*read)(request_t *, file_t *, ssize_t *, void *, size_t);
+	int (*write)(request_t *, file_t *, ssize_t *, void *, size_t);
 	int (*close)(file_t *);
-	int (*read)(file_t *, ssize_t *, void *, size_t);
-	int (*write)(file_t *, ssize_t *, void *, size_t);
 	int (*truncate)(file_t *, int *, off_t);
 };
 
@@ -116,5 +121,12 @@ typedef struct {
 	request_t *requests;
 } pool_t;
 
+
+typedef request_t *queue_t;
+
+void request_queue_init(queue_t *q);
+int request_queue_retry(request_t *r, file_t *f, queue_t *q);
+int request_queue_retry_timeout(request_t *r, file_t *f, queue_t *q, int timeout_ms);
+void request_continue(queue_t *q);
 
 #endif

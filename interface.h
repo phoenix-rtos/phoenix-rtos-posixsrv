@@ -256,7 +256,7 @@ typedef union {
 
 #define POSIXSRV_OUTPUT_FIELD(name) posixsrv_##name##_o_t name;
 typedef struct {
-	int errno;
+	int err_no;
 
 	union {
 		POSIXSRV_CALLS(POSIXSRV_OUTPUT_FIELD)
