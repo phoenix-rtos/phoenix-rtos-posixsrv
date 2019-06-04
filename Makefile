@@ -45,9 +45,8 @@ ARCH =  $(SIL)@mkdir -p $(@D); \
 
 LINK = $(SIL)mkdir -p $(@D); \
 	(printf "LD  %-24s\n" "$(@F)"); \
-	$(LD) $(LDFLAGS) -o "$@"  $^ $(LDLIBS)
-#	$(LD) $(LDFLAGS) -o "$@"  $^ $(PREFIX_A)libtty.a $(LDLIBS)
-	
+	$(LD) $(LDFLAGS) -o "$@"  $^ $(PREFIX_A)libtty.a $(LDLIBS)
+
 HEADER = $(SIL)mkdir -p $(@D); \
 	(printf "HEADER %-24s\n" "$<"); \
 	cp -pR "$<" "$@"
@@ -71,7 +70,7 @@ $(PREFIX_PROG_STRIPPED)%: $(PREFIX_PROG)%
 	
 all: $(PREFIX_PROG_STRIPPED)posixsrv
 
-$(PREFIX_PROG)posixsrv: $(addprefix $(PREFIX_O), posixsrv.o pipe.o)  # event.o pipe.o pty.o special.o tmpfile.o posixsrv.o)
+$(PREFIX_PROG)posixsrv: $(addprefix $(PREFIX_O), posixsrv.o pipe.o pty.o)  # event.o pipe.o pty.o special.o tmpfile.o posixsrv.o)
 	$(LINK)
 	
 .PHONY: clean

@@ -13,9 +13,12 @@
 typedef struct _file_ops_t file_ops_t;
 
 
-typedef struct {
+typedef struct _node_t {
 	idnode_t linkage;
 	const file_ops_t *ops;
+	unsigned refs;
+
+	void (*destroy)(struct _node_t *);
 } node_t;
 
 
@@ -104,6 +107,7 @@ struct _file_ops_t {
 	int (*write)(request_t *, file_t *, ssize_t *, void *, size_t);
 	int (*close)(file_t *);
 	int (*truncate)(file_t *, int *, off_t);
+	int (*ioctl)(file_t *, pid_t, unsigned, const void *, const void **);
 };
 
 
@@ -128,5 +132,12 @@ void request_queue_init(queue_t *q);
 int request_queue_retry(request_t *r, file_t *f, queue_t *q);
 int request_queue_retry_timeout(request_t *r, file_t *f, queue_t *q, int timeout_ms);
 void request_continue(queue_t *q);
+
+int fs_lookup(const char *path, oid_t *node);
+int fs_create_special(oid_t dir, const char *name, int id, mode_t mode);
+int msg_unlink(oid_t dir, const char *name);
+int node_add(node_t *node);
+void node_put(node_t *node);
+
 
 #endif

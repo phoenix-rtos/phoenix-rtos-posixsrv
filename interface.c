@@ -236,7 +236,7 @@ int px_dup2(ssize_t *retval, int fd1, int fd2)
 }
 
 
-int px_pipe(ssize_t *retval, int fd[2])
+int px_pipe(int *retval, int fd[2])
 {
 	int err;
 	msg_t msg;
@@ -259,6 +259,32 @@ int px_pipe(ssize_t *retval, int fd[2])
 	fd[1] = _o->pipe.fd[1];
 
 	*retval = _o->pipe.retval;
+	return _o->err_no;
+}
+
+
+int px_mkfifo(int *retval, const char *pathname, mode_t mode)
+{
+	int err;
+	msg_t msg;
+	posixsrv_i_t *_i = (void *)msg.i.raw;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_mkfifo;
+
+	msg.i.data = pathname;
+	msg.i.size = strlen(pathname) + 1;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	_i->mkfifo.mode = mode;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
+		*retval = -1;
+		return -err;
+	}
+
+	*retval = _o->mkfifo.retval;
 	return _o->err_no;
 }
 
@@ -676,5 +702,60 @@ int px_getppid(pid_t *retval, pid_t pid)
 	}
 
 	*retval = _o->getppid.retval;
+	return _o->err_no;
+}
+
+
+int px_lseek(off_t *retval, int fd, off_t offset, int whence)
+{
+	int err;
+	msg_t msg;
+	posixsrv_i_t *_i = (void *)msg.i.raw;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_lseek;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = NULL;
+	msg.o.size = 0;
+
+	_i->lseek.fd = fd;
+	_i->lseek.offset = offset;
+	_i->lseek.whence = whence;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
+		*retval = -1;
+		return -err;
+	}
+
+	*retval = _o->lseek.retval;
+	return _o->err_no;
+}
+
+
+
+int px_fstat(int *retval, int fd, struct stat *buf)
+{
+	int err;
+	msg_t msg;
+	posixsrv_i_t *_i = (void *)msg.i.raw;
+	posixsrv_o_t *_o = (void *)msg.o.raw;
+
+	msg.type = posixsrv_fstat;
+
+	msg.i.data = NULL;
+	msg.i.size = 0;
+	msg.o.data = buf;
+	msg.o.size = sizeof(*buf);
+
+	_i->fstat.fd = fd;
+
+	if ((err = msgSend(posixsrv_port, &msg)) < 0) {
+		*retval = -1;
+		return -err;
+	}
+
+	*retval = _o->fstat.retval;
 	return _o->err_no;
 }

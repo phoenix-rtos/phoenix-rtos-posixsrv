@@ -11,6 +11,7 @@
 	ID(dup) \
 	ID(dup2) \
 	ID(pipe) \
+	ID(mkfifo) \
 	ID(recvfrom) \
 	ID(execve) \
 	ID(vfork) \
@@ -24,15 +25,14 @@
 	ID(setpgid) \
 	ID(getsid) \
 	ID(getpgid) \
-	ID(getppid)
+	ID(getppid) \
+	ID(lseek) \
+	ID(fstat)
 
 
 
 /*
-	ID(lseek) \
-	ID(mkfifo) \
 	ID(chmod) \
-	ID(fstat) \
 	ID(accept) \
 	ID(accept4) \
 	ID(bind) \
@@ -48,13 +48,9 @@
 	ID(ioctl) \
 	ID(utimes) \
 	ID(poll) \
-	ID(setpgid) \
-	ID(getpgid) \
 	ID(setpgrp) \
 	ID(getpgrp) \
-	ID(setsid) \
 	ID(fork) \
-	ID(exec) \
 */
 
 #define POSIXSRV_DEFINE_ENUM(name) posixsrv_##name,
@@ -128,6 +124,15 @@ typedef struct {
 	int retval;
 	int fd[2];
 } posixsrv_pipe_o_t;
+
+
+typedef struct {
+	mode_t mode;
+} posixsrv_mkfifo_i_t;
+
+typedef struct {
+	int retval;
+} posixsrv_mkfifo_o_t;
 
 
 typedef struct {
@@ -245,6 +250,26 @@ typedef char posixsrv_getppid_i_t[0];
 typedef struct {
 	pid_t retval;
 } posixsrv_getppid_o_t;
+
+
+typedef struct {
+	int fd;
+	off_t offset;
+	int whence;
+} posixsrv_lseek_i_t;
+
+typedef struct {
+	off_t retval;
+} posixsrv_lseek_o_t;
+
+
+typedef struct {
+	int fd;
+} posixsrv_fstat_i_t;
+
+typedef struct {
+	int retval;
+} posixsrv_fstat_o_t;
 
 
 #define POSIXSRV_INPUT_FIELD(name) posixsrv_##name##_i_t name;

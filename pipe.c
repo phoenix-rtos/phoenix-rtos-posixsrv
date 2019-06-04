@@ -51,13 +51,12 @@ static void pipe_unlock(pipe_t *pipe)
 }
 
 
-static int pipe_destroy(node_t *node)
+static void pipe_destroy(node_t *node)
 {
 	pipe_t *pipe = pipe_node(node);
 
 	resourceDestroy(pipe->lock);
 	free(pipe);
-	return EOK;
 }
 
 
@@ -146,7 +145,9 @@ int pipe_create(node_t **node)
 	request_queue_init(&pipe->retry_read);
 	request_queue_init(&pipe->retry_write);
 
+	pipe->node.refs = 1;
 	pipe->node.ops = &pipe_ops;
+	pipe->node.destroy = pipe_destroy;
 	*node = &pipe->node;
 	return EOK;
 }

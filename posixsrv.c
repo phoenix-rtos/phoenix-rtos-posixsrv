@@ -18,6 +18,8 @@
 #include <sys/types.h>
 #include <sys/list.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
+#include <sys/file.h>
 
 #include <fcntl.h>
 #include <signal.h>
@@ -29,7 +31,7 @@
 #include "interface.h"
 #include "posixsrv.h"
 
-#define POSIX_RET(val, err) return (*retval = (val), (err))
+#define POSIX_RET(val, err) return (*retval = (val), (err ? printf("%s:%d err: %d\n", __func__, __LINE__, err), err : err))
 #define SYSCALL_RET(val) return (((val) < 0) ? (*retval = -1), -(val) : (*retval = (val)), EOK)
 
 #define EBLOCK (-1)
@@ -37,7 +39,12 @@
 #define GET_REF(ref) __atomic_add_fetch(ref, 1, __ATOMIC_RELAXED)
 #define PUT_REF(ref) __atomic_add_fetch(ref, -1, __ATOMIC_ACQ_REL)
 
+
 enum { resOk, resBlock, resInvalid };
+
+
+extern int pipe_create(node_t **node);
+extern int pty_init(void);
 
 
 static void file_ref(file_t *f);
@@ -65,7 +72,7 @@ struct {
 	node_t zero;
 	node_t null;
 
-	long long stacks[2][0x400];
+	long long stacks[8][0x400];
 
 	long open_files;
 	long process_count;
@@ -104,6 +111,27 @@ int fs_lookup(const char *path, oid_t *node)
 }
 
 
+static int msg_create(oid_t oid, oid_t dir, const char *name, int type, mode_t mode)
+{
+	int err;
+	msg_t msg = {0};
+
+	msg.type = mtCreate;
+	msg.i.create.dir = dir;
+	msg.i.create.dev = oid;
+	msg.i.create.type = type;
+	msg.i.create.mode = mode;
+
+	msg.i.size = strlen(name) + 1;
+	msg.i.data = name;
+
+	if ((err = msgSend(dir.port, &msg)) < 0)
+		return -err;
+
+	return -msg.o.create.err;
+}
+
+
 int msg_link(oid_t oid, oid_t dir, const char *name)
 {
 	msg_t msg = {0};
@@ -119,18 +147,57 @@ int msg_link(oid_t oid, oid_t dir, const char *name)
 }
 
 
-int msg_unlink(oid_t oid, oid_t dir, const char *name)
+int msg_unlink(oid_t dir, const char *name)
 {
 	msg_t msg = {0};
 
 	msg.type = mtUnlink;
 	msg.i.ln.dir = dir;
-	msg.i.ln.oid = oid;
 
 	msg.i.size = strlen(name) + 1;
 	msg.i.data = name;
 
 	return -msgSend(dir.port, &msg);
+}
+
+
+static int msg_getattr(oid_t oid, int type, int *val)
+{
+	int err;
+	msg_t msg = {0};
+
+	msg.type = mtGetAttr;
+	msg.i.attr.oid = oid;
+	msg.i.attr.type = type;
+
+	if ((err = msgSend(oid.port, &msg)) < 0)
+		return err;
+
+	*val = msg.o.attr.val;
+	return EOK;
+}
+
+
+static size_t fs_size(file_t *file)
+{
+	size_t size;
+
+	/* TODO: handle */
+	if (msg_getattr(file->oid, atSize, &size) < 0)
+		return 0;
+
+	return size;
+}
+
+
+int fs_create_special(oid_t dir, const char *name, int id, mode_t mode)
+{
+	oid_t oid;
+
+	oid.port = posixsrv_common.port;
+	oid.id = id;
+
+	return msg_create(oid, dir, name, 0, mode);
 }
 
 
@@ -210,7 +277,7 @@ static process_t *process_new(process_t *parent)
 			return NULL;
 		}
 
-		p->fdcount = 4;
+		p->fdcount = 16;
 
 		if ((p->fds = calloc(p->fdcount, sizeof(fildes_t))) == NULL) {
 			free(p);
@@ -542,6 +609,9 @@ static void file_destroy(file_t *f)
 	if (f->ops != NULL)
 		f->ops->close(f);
 
+	if (f->node != NULL)
+		node_put(f->node);
+
 	resourceDestroy(f->lock);
 	free(f);
 
@@ -557,7 +627,7 @@ static void file_ref(file_t *f)
 
 static void file_deref(file_t *f)
 {
-	if (!PUT_REF(&f->refs))
+	if (f && !PUT_REF(&f->refs))
 		file_destroy(f);
 }
 
@@ -584,6 +654,9 @@ static int _fd_realloc(process_t *p)
 
 static int _fd_alloc(process_t *p, int fd)
 {
+	if (fd < 0)
+		fd = 0;
+
 	while (fd < p->fdcount) {
 		if (p->fds[fd].file == NULL)
 			return fd;
@@ -696,6 +769,47 @@ static void nodetree_unlock(void)
 }
 
 
+static void node_destroy(node_t *node)
+{
+	nodetree_lock();
+	idtree_remove(&posixsrv_common.nodes, &node->linkage);
+	nodetree_unlock();
+
+	node->destroy(node);
+}
+
+
+static void node_ref(node_t *node)
+{
+	GET_REF(&node->refs);
+}
+
+
+void node_put(node_t *node)
+{
+	if (node && !PUT_REF(&node->refs))
+		node_destroy(node);
+}
+
+
+static void node_deref(oid_t *oid)
+{
+	node_t *node;
+
+	if (oid->port != posixsrv_common.port)
+		return;
+
+	nodetree_lock();
+	if ((node = lib_treeof(node_t, linkage, idtree_find(&posixsrv_common.nodes, oid->id))) != NULL) {
+		if (!PUT_REF(&node->refs)) {
+			idtree_remove(&posixsrv_common.nodes, &node->linkage);
+			node->destroy(node);
+		}
+	}
+	nodetree_unlock();
+}
+
+
 static node_t *node_get(oid_t *oid)
 {
 	node_t *node;
@@ -704,10 +818,23 @@ static node_t *node_get(oid_t *oid)
 		return NULL;
 
 	nodetree_lock();
-	node = lib_treeof(node_t, linkage, idtree_find(&posixsrv_common.nodes, oid->id));
+	if ((node = lib_treeof(node_t, linkage, idtree_find(&posixsrv_common.nodes, oid->id))) != NULL)
+		node_ref(node);
 	nodetree_unlock();
 
 	return node;
+}
+
+
+int node_add(node_t *node)
+{
+	int id;
+
+	nodetree_lock();
+	id = idtree_alloc(&posixsrv_common.nodes, &node->linkage);
+	nodetree_unlock();
+
+	return id;
 }
 
 
@@ -827,30 +954,25 @@ static int posix_open(request_t *r, char *path, int oflag, mode_t mode, int *ret
 	oid_t oid;
 	int err_no, fd = 0;
 	file_t *file;
-	const file_ops_t *ops;
 
 	/* TODO: canonicalize path */
 	if (lookup(path, NULL, &oid) < 0)
 		POSIX_RET(-1, ENOENT);
 
-	/* TODO: return locked file from file_new to avoid race */
 	if ((err_no = file_new(r->process, &fd, &file)))
 		POSIX_RET(-1, err_no);
 
 	file_lock(file);
 	if ((file->node = node_get(&oid)) != NULL)
-		ops = file->node->ops;
+		file->ops = file->node->ops;
 	else
-		ops = &generic_ops;
+		file->ops = &generic_ops;
 
 	file->oid = oid;
 
-	if ((err_no = ops->open(r, file))) {
+	if ((err_no = file->ops->open(r, file))) {
 		file_close(r->process, fd);
 		fd = -1;
-	}
-	else {
-		file->ops = ops;
 	}
 	file_unlock(file);
 
@@ -871,12 +993,6 @@ static int posix_close(process_t *p, int fd, int *retval)
 
 
 /* Other calls */
-
-static int posix_pipe(process_t *p, int fd[2], ssize_t *retval)
-{
-	return EOK;
-}
-
 
 static int _posix_dup(process_t *p, int fd, int *retval)
 {
@@ -941,6 +1057,76 @@ static int posix_dup2(process_t *p, int fd1, int fd2, int *retval)
 	err_no = _posix_dup2(p, fd1, fd2, retval);
 	process_unlock(p);
 	return err_no;
+}
+
+
+static int posix_pipe(process_t *p, int fd[2], int *retval)
+{
+	int err_no;
+	file_t *pipe = NULL;
+	node_t *node;
+
+	fd[0] = fd[1] = -1;
+
+	if ((err_no = file_new(p, fd, &pipe)))
+		goto err;
+
+	if ((err_no = pipe_create(&node)))
+		goto err;
+
+	file_lock(pipe);
+	pipe->node = node;
+	pipe->ops = node->ops;
+	pipe->status = O_RDWR;
+	file_unlock(pipe);
+
+	if ((err_no = posix_dup(p, fd[0], &fd[1])))
+		goto err;
+
+	file_deref(pipe);
+	POSIX_RET(0, EOK);
+
+err:
+	file_close(p, fd[0]);
+	file_close(p, fd[1]);
+
+	file_deref(pipe);
+	POSIX_RET(-1, err_no);
+}
+
+
+static int posix_mkfifo(process_t *p, const char *pathname, mode_t mode, int *retval)
+{
+	char *pathcopy;
+	char *dirname, *basename;
+	int err_no, id;
+	oid_t dir;
+	node_t *pipe;
+
+	if ((pathcopy = strdup(pathname)) == NULL) {
+		err_no = ENOMEM;
+		goto out;
+	}
+
+	splitname(pathcopy, &basename, &dirname);
+
+	if ((err_no = fs_lookup(dirname, &dir)))
+		goto out;
+
+	if ((err_no = pipe_create(&pipe)))
+		goto out;
+
+	id = node_add(pipe);
+	err_no = fs_create_special(dir, basename, id, DEFFILEMODE | S_IFIFO);
+
+out:
+	free(pathcopy);
+
+	if (err_no) {
+		// remove
+	}
+
+	POSIX_RET(-!!err_no, err_no);
 }
 
 
@@ -1162,17 +1348,20 @@ static int posix_link(process_t *p, const char *path1, const char *path2, int *r
 	name = strdup(path2);
 	splitname(name, &basename, &dirname);
 
-	if ((err = fs_lookup(dirname, &dir)) != EOK)
+	if ((err = fs_lookup(dirname, &dir)) != EOK) {
 		*retval = -1;
-
-	else if ((err = fs_lookup(path1, &src)) != EOK)
+	}
+	else if ((err = fs_lookup(path1, &src)) != EOK) {
 		*retval = -1;
-
-	else if ((err = msg_link(src, dir, basename)) != EOK)
+	}
+	else if ((err = msg_link(src, dir, basename)) != EOK) {
 		*retval = -1;
-
-	else
+	}
+	else {
+		/* Bump reference count if it's a file we manage */
+		node_get(&src);
 		*retval = 0;
+	}
 
 	free(name);
 	return err;
@@ -1188,17 +1377,19 @@ static int posix_unlink(process_t *p, const char *path, int *retval)
 	name = strdup(path);
 	splitname(name, &basename, &dirname);
 
-	if ((err = fs_lookup(dirname, &dir)) != EOK)
+	if ((err = fs_lookup(dirname, &dir)) != EOK) {
 		*retval = -1;
-
-	else if ((err = fs_lookup(path, &src)) != EOK)
+	}
+	else if ((err = fs_lookup(path, &src)) != EOK) {
 		*retval = -1;
-
-	else if ((err = msg_unlink(src, dir, basename)) != EOK)
+	}
+	else if ((err = msg_unlink(dir, basename)) != EOK) {
 		*retval = -1;
-
-	else
+	}
+	else {
+		node_deref(&src);
 		*retval = 0;
+	}
 
 	free(name);
 	return err;
@@ -1383,6 +1574,66 @@ static int posix_getppid(process_t *p, pid_t *retval)
 }
 
 
+static int posix_lseek(process_t *p, int fd, off_t offset, int whence, off_t *retval)
+{
+	file_t *file;
+	off_t result;
+	int err = EOK;
+	size_t size;
+
+	if ((file = file_get(p, fd)) == NULL)
+		POSIX_RET(-1, EBADF);
+
+	if (S_ISFIFO(file->mode)) {
+		file_deref(file);
+		POSIX_RET(-1, ESPIPE);
+	}
+
+	file_lock(file);
+	switch (whence) {
+	case SEEK_SET:
+		file->offset = offset;
+		result = offset;
+		break;
+
+	case SEEK_CUR:
+		file->offset -= offset;
+		result = file->offset;
+		break;
+
+	case SEEK_END:
+		/* TODO: use file->ops to getattr size? */
+		size = fs_size(file);
+		file->offset = size - offset;
+		result = file->offset;
+		break;
+
+	default:
+		err = EINVAL;
+		result = -1;
+	}
+	file_unlock(file);
+	file_deref(file);
+
+	POSIX_RET(result, err);
+}
+
+
+int posix_fstat(process_t *p, int fd, struct stat *buf, int *retval)
+{
+	file_t *file;
+	int err;
+
+	if ((file = file_get(p, fd)) == NULL)
+		POSIX_RET(-1, EBADF);
+
+	// err = file->ops->getattr(file, buf);
+
+	file_deref(file);
+	POSIX_RET(0, EOK);
+}
+
+
 static int posix_init(int pid)
 {
 	process_t *init;
@@ -1485,6 +1736,20 @@ static int handle_pipe(request_t *r)
 	int *retval = &_o->pipe.retval;
 
 	_o->err_no = posix_pipe(r->process, fd, retval);
+	return resOk;
+}
+
+
+static int handle_mkfifo(request_t *r)
+{
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	const char *pathname = r->msg.i.data;
+	mode_t mode = _i->mkfifo.mode;
+	int *retval = &_o->pipe.retval;
+
+	_o->err_no = posix_mkfifo(r->process, pathname, mode, retval);
 	return resOk;
 }
 
@@ -1759,11 +2024,41 @@ static int handle_getppid(request_t *r)
 {
 	posixsrv_o_t *_o = (void *)r->msg.o.raw;
 
-	pid_t *retval = &_o->getsid.retval;
+	pid_t *retval = &_o->getppid.retval;
 
 	_o->err_no = posix_getppid(r->process, retval);
 	return resOk;
 }
+
+
+static int handle_lseek(request_t *r)
+{
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	off_t *retval = &_o->lseek.retval;
+	int fd = _i->lseek.fd;
+	off_t offset = _i->lseek.offset;
+	int whence = _i->lseek.whence;
+
+	_o->err_no = posix_lseek(r->process, fd, offset, whence, retval);
+	return resOk;
+}
+
+
+static int handle_fstat(request_t *r)
+{
+	posixsrv_i_t *_i = (void *)r->msg.i.raw;
+	posixsrv_o_t *_o = (void *)r->msg.o.raw;
+
+	int *retval = &_o->fstat.retval;
+	int fd = _i->fstat.fd;
+	struct stat *buf = r->msg.o.data;
+
+	_o->err_no = posix_fstat(r->process, fd, buf, retval);
+	return resOk;
+}
+
 
 
 /* */
@@ -1989,10 +2284,10 @@ static void special_init(void)
 	idtree_init(&posixsrv_common.nodes);
 
 	posixsrv_common.zero.ops = &zero_ops;
-	idtree_alloc(&posixsrv_common.nodes, &posixsrv_common.zero.linkage);
+	node_add(&posixsrv_common.zero);
 
 	posixsrv_common.null.ops = &null_ops;
-	idtree_alloc(&posixsrv_common.nodes, &posixsrv_common.null.linkage);
+	node_add(&posixsrv_common.null);
 }
 
 
@@ -2004,6 +2299,7 @@ int main(int argc, char **argv)
 	init();
 	special_init();
 	pool_init(pool, posixsrv_common.port);
+	pty_init();
 
 	for (i = 0; i < pool->min; ++i)
 		beginthread(posixsrv_poolThread, pool->priority, posixsrv_common.stacks[i], sizeof(posixsrv_common.stacks[i]), pool);
