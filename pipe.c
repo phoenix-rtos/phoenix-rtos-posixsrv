@@ -17,6 +17,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/minmax.h>
 #include <sys/socket.h>
 #include <time.h>
 #include <sys/resource.h>
