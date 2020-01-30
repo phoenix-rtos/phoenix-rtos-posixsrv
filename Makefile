@@ -68,9 +68,9 @@ $(PREFIX_PROG_STRIPPED)%: $(PREFIX_PROG)%
 	@(printf "STR %-24s\n" "$(@F)")
 	$(SIL)$(STRIP) -o $@ $<
 	
-all: $(PREFIX_PROG_STRIPPED)posixsrv
+all: $(PREFIX_PROG_STRIPPED)ptysrv
 
-$(PREFIX_PROG)posixsrv: $(addprefix $(PREFIX_O), event.o pipe.o pty.o special.o tmpfile.o posixsrv.o)
+$(PREFIX_PROG)ptysrv: $(addprefix $(PREFIX_O), ptysrv.o)
 	$(LINK)
 	
 .PHONY: clean
