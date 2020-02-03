@@ -38,7 +38,6 @@ typedef struct _pty_t {
 	handle_t lock;
 
 	unsigned used : 1;
-	unsigned initialized : 1;
 	unsigned unlocked : 1;
 	unsigned slave_open : 1;
 	unsigned master_open : 1;
@@ -116,9 +115,12 @@ static void pty_unlock(pty_t *pty)
 static void pty_destroy(pty_t *pty)
 {
 	pty->used = 0;
+	libtty_destroy(&pty->tty);
+	resourceDestroy(pty->lock);
+
 	common_lock();
 	pty->freenext = pty_common.freept;
-	pty_common.freept = pty->freenext;
+	pty_common.freept = pty;
 	common_unlock();
 }
 
@@ -230,20 +232,14 @@ static int pty_create(id_t *masterid)
 		exit(EXIT_FAILURE);
 	}
 
-	if (!pty->initialized) {
-		if ((error = mutexCreate(&pty->lock)) < 0) {
-			return error;
-		}
-
-		pty->ops.arg = pty;
-		pty->ops.set_baudrate = NULL;
-		pty->ops.set_cflag = NULL;
-		pty->ops.signal_txready = signal_txready;
-
+	if ((error = mutexCreate(&pty->lock)) < 0) {
+		return error;
 	}
-	else {
-		libtty_destroy(&pty->tty);
-	}
+
+	pty->ops.arg = pty;
+	pty->ops.set_baudrate = NULL;
+	pty->ops.set_cflag = NULL;
+	pty->ops.signal_txready = signal_txready;
 
 	if (libtty_init(&pty->tty, &pty->ops, PTY_BUFFER_SIZE)) {
 		resourceDestroy(pty->lock);
@@ -255,7 +251,6 @@ static int pty_create(id_t *masterid)
 
 	pty->unlocked = 0;
 	pty->used = 1;
-	pty->initialized = 1;
 	pty->slave_open = 0;
 	pty->master_open = 1;
 	*masterid = ptm_number(pty);
@@ -312,6 +307,10 @@ static void msg_loop(void *arg)
 
 					pty->master_open = 0;
 					portEvent(pty_common.port, pts_number(pty), POLLHUP);
+
+					if (!pty->slave_open) {
+						pty_destroy(pty);
+					}
 
 					error = EOK;
 					break;
@@ -421,9 +420,13 @@ static void msg_loop(void *arg)
 				}
 				case mtClose: {
 					LOG_DEBUG("pts close");
-					LOG_ERROR("pts close");
 					pty->slave_open = 0;
 					portEvent(pty_common.port, ptm_number(pty), POLLHUP);
+
+					if (!pty->master_open) {
+						pty_destroy(pty);
+					}
+
 					error = EOK;
 					break;
 				}
