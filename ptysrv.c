@@ -39,8 +39,8 @@ typedef struct _pty_t {
 
 	unsigned used : 1;
 	unsigned unlocked : 1;
-	unsigned slave_open : 1;
 	unsigned master_open : 1;
+	unsigned slave_open;
 
 	libtty_common_t tty;
 	libtty_callbacks_t ops;
@@ -114,6 +114,7 @@ static void pty_unlock(pty_t *pty)
 
 static void pty_destroy(pty_t *pty)
 {
+	LOG_DEBUG("destroying pty id=%u", pty_index(pty));
 	pty->used = 0;
 	libtty_destroy(&pty->tty);
 	resourceDestroy(pty->lock);
@@ -287,7 +288,7 @@ static void msg_loop(void *arg)
 		}
 		else if ((pty = pty_get(msg.object)) == NULL) {
 			LOG_ERROR("pt with id %llu not found", msg.object);
-			error = -ENOENT;
+			error = -ENXIO;
 		}
 		else {
 			pty_lock(pty);
@@ -325,12 +326,15 @@ static void msg_loop(void *arg)
 					else if ((error = ptm_write(pty, msg.i.data, msg.i.size)) >= 0) {
 						msg.o.io = error;
 						error = EOK;
+						if (!msg.o.io)
+							error = -EAGAIN;
 					}
 					break;
 				}
 				case mtRead: {
 					LOG_DEBUG("ptm read");
 					if (!pty->slave_open) {
+						LOG_DEBUG("ptm read, slave closed");
 						/* return EPIPE? */
 						msg.o.io = 0;
 						error = 0;
@@ -338,6 +342,8 @@ static void msg_loop(void *arg)
 					else if ((error = ptm_read(pty, msg.o.data, msg.o.size)) >= 0) {
 						msg.o.io = error;
 						error = EOK;
+						if (!msg.o.io)
+							error = -EAGAIN;
 					}
 					break;
 				}
@@ -381,8 +387,10 @@ static void msg_loop(void *arg)
 
 						if (pty->slave_open)
 							*events |= POLLOUT;
-						if (libtty_txready(&pty->tty))
+						if (libtty_txready(&pty->tty)) {
+							LOG_DEBUG("txready");
 							*events |= POLLIN;
+						}
 						break;
 					}
 					default: {
@@ -411,7 +419,7 @@ static void msg_loop(void *arg)
 						error = -ENXIO;
 					} else if (pty->unlocked) {
 						error = EOK;
-						pty->slave_open = 1;
+						pty->slave_open += 1;
 					}
 					else {
 						error = -EACCES;
@@ -420,10 +428,12 @@ static void msg_loop(void *arg)
 				}
 				case mtClose: {
 					LOG_DEBUG("pts close");
-					pty->slave_open = 0;
-					portEvent(pty_common.port, ptm_number(pty), POLLHUP);
+					pty->slave_open -= 1;
 
-					if (!pty->master_open) {
+					if (!pty->slave_open)
+						portEvent(pty_common.port, ptm_number(pty), POLLHUP);
+
+					if (!pty->master_open && !pty->slave_open) {
 						pty_destroy(pty);
 					}
 
