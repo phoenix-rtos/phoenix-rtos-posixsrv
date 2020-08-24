@@ -623,7 +623,7 @@ static int ptm_create(int *id)
 	mutexCreate(&pty->mutex);
 	condCreate(&pty->cond);
 
-	if (libtty_init(&pty->tty, &pty->ops, SIZE_PAGE) < 0) {
+	if (libtty_init(&pty->tty, &pty->ops, _PAGE_SIZE) < 0) {
 		log_error("libtty_init");
 		free(pty);
 		return -ENOMEM;
