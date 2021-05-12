@@ -6,21 +6,30 @@
 # %LICENSE%
 #
 
-SIL ?= @
 MAKEFLAGS += --no-print-directory
-
 
 include ../phoenix-rtos-build/Makefile.common
 include ../phoenix-rtos-build/Makefile.$(TARGET_SUFF)
 
 CFLAGS += $(BOARD_CONFIG)
 
+.DEFAULT_GOAL := all
 
-all: $(PREFIX_PROG_STRIPPED)posixsrv
+ifneq ($(filter %clean,$(MAKECMDGOALS)),)
+$(info cleaning targets, make parallelism disabled)
+.NOTPARALLEL:
+endif
 
-$(PREFIX_PROG)posixsrv: $(addprefix $(PREFIX_O), event.o pipe.o pty.o special.o tmpfile.o posixsrv.o) $(PREFIX_A)libtty.a
-	$(LINK)
+# single component in this whole repo
+NAME := posixsrv
+SRCS := $(wildcard *.c)
+LIBS := libtty
+include $(binary.mk)
 
-.PHONY: clean
-clean:
-	@echo >/dev/null
+DEFAULT_COMPONENTS := posixsrv
+
+# create generic targets
+.PHONY: all install clean
+all: $(DEFAULT_COMPONENTS)
+install: $(patsubst %,%-install,$(DEFAULT_COMPONENTS))
+clean: $(patsubst %,%-clean,$(DEFAULT_COMPONENTS))
