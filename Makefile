@@ -7,16 +7,10 @@
 #
 
 include ../phoenix-rtos-build/Makefile.common
-include ../phoenix-rtos-build/Makefile.$(TARGET_SUFF)
 
 CFLAGS += $(BOARD_CONFIG)
 
 .DEFAULT_GOAL := all
-
-ifneq ($(filter %clean,$(MAKECMDGOALS)),)
-$(info cleaning targets, make parallelism disabled)
-.NOTPARALLEL:
-endif
 
 # single component in this whole repo
 NAME := posixsrv
@@ -24,10 +18,11 @@ SRCS := $(wildcard *.c)
 LIBS := libtty
 include $(binary.mk)
 
-DEFAULT_COMPONENTS := posixsrv
+ALL_COMPONENTS := posixsrv
+DEFAULT_COMPONENTS := $(ALL_COMPONENTS)
 
 # create generic targets
 .PHONY: all install clean
 all: $(DEFAULT_COMPONENTS)
 install: $(patsubst %,%-install,$(DEFAULT_COMPONENTS))
-clean: $(patsubst %,%-clean,$(DEFAULT_COMPONENTS))
+clean: $(patsubst %,%-clean,$(ALL_COMPONENTS))
