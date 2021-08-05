@@ -490,7 +490,7 @@ int pipe_close(pipe_t *p, unsigned flags, request_t *r)
 
 		p->rrefs--;
 
-		if (!p->wrefs && p->queue != NULL) {
+		if (!p->rrefs) {
 			while (p->queue != NULL)
 				_pipe_wakeup(p, p->queue, -EPIPE);
 		}
