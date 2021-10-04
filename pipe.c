@@ -570,13 +570,17 @@ static request_t *pipe_setattr_op(object_t *o, request_t *r)
 	pipe_t *p = (pipe_t *)o;
 
 	if (r->msg.i.attr.type == atEventMask) {
-		r->msg.o.attr.val = p->evmask;;
+		r->msg.o.attr.val = p->evmask;
+		r->msg.o.attr.err = EOK;
 		p->evmask = r->msg.i.attr.val;
-	} else {
-		r->msg.o.attr.val = -EINVAL;
 	}
+	else {
+		r->msg.o.attr.err = -EINVAL;
+	}
+
 	return r;
 }
+
 
 static request_t *pipe_getattr_op(object_t *o, request_t *r)
 {
