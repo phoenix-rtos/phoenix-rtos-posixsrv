@@ -198,7 +198,12 @@ void rq_setResponse(request_t *r, int response)
 		break;
 	case mtGetAttr:
 	case mtSetAttr:
+		if (response < 0) {
+			r->msg.o.attr.err = response;
+			break;
+		}
 		r->msg.o.attr.val = response;
+		r->msg.o.attr.err = EOK;
 		break;
 	default:
 		/* TODO: other cases */

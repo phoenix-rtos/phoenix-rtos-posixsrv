@@ -471,15 +471,15 @@ static request_t *ptm_close_op(object_t *o, request_t *r)
 static request_t *pts_setattr_op(object_t *o, request_t *r)
 {
 	PTY_TRACE("pts_setattr(%d)", object_id(o));
-
 	pty_t *pty = pty_slave(o);
 
 	if (r->msg.i.attr.type == atEventMask) {
 		r->msg.o.attr.val = pty->evmask;
+		r->msg.o.attr.err = EOK;
 		pty->evmask = r->msg.i.attr.val;
 	}
 	else {
-		r->msg.o.attr.val = -EINVAL;
+		r->msg.o.attr.err = -EINVAL;
 	}
 
 	return r;
@@ -494,10 +494,11 @@ static request_t *ptm_setattr_op(object_t *o, request_t *r)
 
 	if (r->msg.i.attr.type == atEventMask) {
 		r->msg.o.attr.val = pty->evmask;
+		r->msg.o.attr.err = EOK;
 		pty->evmask = r->msg.i.attr.val;
 	}
 	else {
-		r->msg.o.attr.val = -EINVAL;
+		r->msg.o.attr.err = -EINVAL;
 	}
 
 	return r;
@@ -508,12 +509,14 @@ static request_t *pts_getattr_op(object_t *o, request_t *r)
 {
 	pty_t *pty = pty_slave(o);
 
-	if (r->msg.i.attr.type != atPollStatus) {
-		r->msg.o.attr.val = -EINVAL;
-		return r;
+	if (r->msg.i.attr.type == atPollStatus) {
+		r->msg.o.attr.val = libtty_poll_status(&pty->tty) & r->msg.i.attr.val;
+		r->msg.o.attr.err = EOK;
+	}
+	else {
+		r->msg.o.attr.err = -EINVAL;
 	}
 
-	r->msg.o.attr.val = libtty_poll_status(&pty->tty) & r->msg.i.attr.val;
 	return r;
 }
 
@@ -521,22 +524,24 @@ static request_t *pts_getattr_op(object_t *o, request_t *r)
 static request_t *ptm_getattr_op(object_t *o, request_t *r)
 {
 	pty_t *pty = pty_master(o);
-	unsigned ev , rev = 0;
+	unsigned ev, rev = 0;
 
-	if (r->msg.i.attr.type != atPollStatus) {
-		r->msg.o.attr.val = -EINVAL;
-		return r;
+	if (r->msg.i.attr.type == atPollStatus) {
+		ev = r->msg.i.attr.val;
+
+		if (ev & POLLIN && libtty_txready(&pty->tty))
+			rev |= POLLIN;
+
+		if (ev & POLLOUT)
+			rev |= POLLOUT;
+
+		r->msg.o.attr.val = rev;
+		r->msg.o.attr.err = EOK;
+	}
+	else {
+		r->msg.o.attr.err = -EINVAL;
 	}
 
-	ev = r->msg.i.attr.val;
-
-	if (ev & POLLIN && libtty_txready(&pty->tty))
-		rev |= POLLIN;
-
-	if (ev & POLLOUT)
-		rev |= POLLOUT;
-
-	r->msg.o.attr.val = rev;
 	return r;
 }
 

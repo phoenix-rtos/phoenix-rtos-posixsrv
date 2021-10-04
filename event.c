@@ -299,7 +299,7 @@ static void _note_poll(evnote_t *note)
 
 	/* TODO: have a way to update event data */
 
-	if (msgSend(note->entry->oid.port, &msg) == EOK && msg.o.attr.val > 0)
+	if ((msgSend(note->entry->oid.port, &msg) == EOK) && (msg.o.attr.err == EOK))
 		note->pend |= msg.o.attr.val & note->mask;
 }
 
