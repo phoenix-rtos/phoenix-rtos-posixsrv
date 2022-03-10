@@ -42,6 +42,7 @@ typedef struct request_t {
 	/* Subsystem specific per-request state */
 	union {
 		libtty_read_state_t pts_read;
+		int pipe_bytes;
 	};
 } request_t;
 

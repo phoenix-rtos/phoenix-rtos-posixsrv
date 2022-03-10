@@ -319,7 +319,7 @@ void posixsrvthr(void *arg)
 
 	for (;;) {
 		if (r == NULL) {
-			r = malloc(sizeof(*r));
+			r = calloc(sizeof(*r), 1);
 			r->port = port;
 		}
 

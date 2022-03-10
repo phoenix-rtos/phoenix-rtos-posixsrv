@@ -44,6 +44,28 @@ static handler_t pipe_create_op, pipe_write_op, pipe_read_op, pipe_open_op, pipe
 static handler_t pipe_setattr_op, pipe_getattr_op;
 
 
+static inline void rq_buf_off(request_t *r, int off)
+{
+	if (r->msg.type == mtWrite)
+		r->msg.i.data += off;
+	else
+		r->msg.o.data += off;
+}
+
+
+static inline void rq_sz_dec(request_t *r, int sz)
+{
+	if (r->msg.type == mtWrite)
+		r->msg.i.size -= sz;
+	else
+		r->msg.o.data -= sz;
+}
+
+static inline void _pipe_rq_add_bytes(request_t *pr, int bytes)
+{
+	pr->pipe_bytes += bytes;
+}
+
 static int pipe_lock(handle_t lock, int nonblock)
 {
 	if (nonblock) return mutexTry(lock);
@@ -161,7 +183,7 @@ static void _pipe_wakeup(pipe_t *p, request_t *r, int retval)
 {
 	PIPE_TRACE("wakeup");
 	LIST_REMOVE(&p->queue, r);
-	rq_setResponse(r, retval);
+	rq_setResponse(r, retval + r->pipe_bytes);
 	rq_wakeup(r);
 }
 
@@ -181,6 +203,35 @@ static void pipe_destroy(object_t *o)
 	free(o);
 }
 
+static int _pipe_write_dry_run(pipe_t *p, void *buf, size_t sz)
+{
+	int bytes = 0;
+
+	if (!sz || p->buf == NULL)
+		return 0;
+
+	if (p->r == p->w && p->full) {
+		PIPE_TRACE("write was full");
+		return bytes;
+	}
+
+	if (p->r > p->w) {
+		bytes = min(sz, p->r - p->w);
+	}
+	else {
+		bytes = min(sz, PIPE_BUFSZ - p->w);
+
+		if (bytes < sz && p->r) {
+			buf += bytes;
+			sz -= bytes;
+			bytes += min(sz, p->r);
+		}
+	}
+
+	PIPE_TRACE("write %d bytes to %d", bytes, object_id(&p->object));
+
+	return bytes;
+}
 
 static int _pipe_write(pipe_t *p, void *buf, size_t sz)
 {
@@ -270,7 +321,7 @@ void pipe_event(pipe_t *p, int type)
 
 int pipe_write(pipe_t *p, unsigned mode, request_t *r, int *block)
 {
-	int sz = rq_sz(r), bytes = 0, c, was_empty;
+	int sz = rq_sz(r), bytes = 0, c, was_empty, dry_bytes;
 	void *buf = rq_buf(r);
 
 	if (!sz)
@@ -290,15 +341,22 @@ int pipe_write(pipe_t *p, unsigned mode, request_t *r, int *block)
 
 		was_empty = !p->full && (p->r == p->w);
 
-		/* write to buffer */
-		if (!(bytes += _pipe_write(p, buf + bytes, sz - bytes))) {
-			if (mode & O_NONBLOCK) {
+		if ((mode & O_NONBLOCK) && !bytes && sz < PIPE_BUFSZ) {
+			dry_bytes = _pipe_write_dry_run(p, buf, sz);
+			if (dry_bytes < sz) {
 				PIPE_TRACE("write would block");
-				bytes = -EWOULDBLOCK;
+				mutexUnlock(p->lock);
+				return -EWOULDBLOCK;
 			}
-			else {
+		}
+		/* write to buffer */
+		if ((bytes += _pipe_write(p, buf + bytes, sz - bytes)) < sz) {
+			if (!(mode & O_NONBLOCK)) {
 				PIPE_TRACE("write blocked");
 				*block = 1;
+				rq_buf_off(r, bytes);
+				rq_sz_dec(r, bytes);
+				_pipe_rq_add_bytes(r, bytes);
 				LIST_ADD(&p->queue, r);
 			}
 		}
@@ -331,7 +389,7 @@ static request_t *pipe_write_op(object_t *o, request_t *r)
 
 int pipe_read(pipe_t *p, unsigned mode, request_t *r, int *block)
 {
-	int sz = rq_sz(r), bytes = 0, c, was_full;
+	int sz = rq_sz(r), bytes = 0, c = 0, was_full;
 	void *buf = rq_buf(r);
 
 	if (!sz)
@@ -349,13 +407,26 @@ int pipe_read(pipe_t *p, unsigned mode, request_t *r, int *block)
 		while (p->queue != NULL && bytes < sz) {
 			PIPE_TRACE("reading %d from pending writer\n", c);
 			memcpy(buf + bytes, rq_buf(p->queue), c = min(sz - bytes, rq_sz(p->queue)));
-			_pipe_wakeup(p, p->queue, c);
+			if (c == rq_sz(p->queue)) {
+				_pipe_wakeup(p, p->queue, c);
+			}
+			else {
+				rq_buf_off(p->queue, c);
+				rq_sz_dec(p->queue, c);
+				_pipe_rq_add_bytes(p->queue, c);
+			}
 			bytes += c;
 		}
 
 		/* discharge remaining pending writers */
-		while (p->queue != NULL && (c = _pipe_write(p, rq_buf(p->queue), rq_sz(p->queue))))
+		while (p->queue != NULL && (c = _pipe_write(p, rq_buf(p->queue), rq_sz(p->queue))) == rq_sz(p->queue))
 			_pipe_wakeup(p, p->queue, c);
+
+		if (p->queue != NULL && c < rq_sz(p->queue)) {
+			rq_buf_off(p->queue, c);
+			rq_sz_dec(p->queue, c);
+			_pipe_rq_add_bytes(p->queue, c);
+		}
 
 		if (!p->full)
 			pipe_event(p, evtDataOut);
