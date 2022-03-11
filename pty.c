@@ -557,6 +557,7 @@ static request_t *ptm_devctl_op(object_t *o, request_t *r)
 
 	in_data = ioctl_unpack(&r->msg, &request, NULL);
 
+	mutexLock(pty->mutex);
 	PTY_TRACE("ptm_devctl request: %lx", request);
 
 	switch (request) {
@@ -576,13 +577,14 @@ static request_t *ptm_devctl_op(object_t *o, request_t *r)
 			err = EOK;
 		}
 		break;
-
 	default:
-		log_error("invalid request %x", request);
+		err = libtty_ioctl(&pty->tty, r->msg.pid, request, in_data, &out_data);
 		break;
 	}
+	mutexUnlock(pty->mutex);
 
 	ioctl_setResponse(&r->msg, request, err, out_data);
+
 	return r;
 }
 
