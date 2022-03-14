@@ -320,13 +320,19 @@ void posixsrvthr(void *arg)
 	for (;;) {
 		if (r == NULL) {
 			r = malloc(sizeof(*r));
+			if (r == NULL) {
+				printf("posixsrv: Out of memory\n");
+				endthread();
+			}
 			r->port = port;
 		}
-
 		if (msgRecv(port, &r->msg, &r->rid) < 0)
 			continue;
 
-		if ((o = object_get(rq_id(r))) == NULL || o->operations->handlers[r->msg.type] == NULL) {
+		o = object_get(rq_id(r));
+
+		/* Can't handle msg - wrong object id or wrong operation */
+		if (o == NULL || o->operations->handlers[r->msg.type] == NULL) {
 			if (o != NULL)
 				object_put(o);
 			r->msg.o.io.err = -EINVAL;
@@ -335,8 +341,11 @@ void posixsrvthr(void *arg)
 		}
 
 		r->object = o;
+		r = o->operations->handlers[r->msg.type](o, r);
 
-		if ((r = o->operations->handlers[r->msg.type](o, r)) != NULL)
+		/* If an operation returns NULL, it is up to a module to
+		 * respond to this msg later and free the request */
+		if (r != NULL)
 			msgRespond(port, &r->msg, r->rid);
 
 		object_put(o);
