@@ -268,16 +268,23 @@ void pipe_event(pipe_t *p, int type)
 }
 
 
-int pipe_write(pipe_t *p, unsigned mode, request_t *r, int *block)
+static request_t *pipe_write_op(object_t *o, request_t *r)
 {
+	pipe_t *p = (pipe_t *)o;
 	int sz = rq_sz(r), bytes = 0, c, was_empty;
 	void *buf = rq_buf(r);
+	int block = 0;
+	int mode = r->msg.i.io.mode;
 
-	if (!sz)
-		return 0;
+	if (sz == 0) {
+		r->msg.o.io.err = 0;
+		return r;
+	}
 
-	if (pipe_lock(p->lock, mode & O_NONBLOCK) < 0)
-		return -EWOULDBLOCK;
+	if (pipe_lock(p->lock, mode & O_NONBLOCK) < 0) {
+		r->msg.o.io.err = -EWOULDBLOCK;
+		return r;
+	}
 
 	if (p->rrefs) {
 		/* write to pending readers */
@@ -298,7 +305,7 @@ int pipe_write(pipe_t *p, unsigned mode, request_t *r, int *block)
 			}
 			else {
 				PIPE_TRACE("write blocked");
-				*block = 1;
+				block = 1;
 				LIST_ADD(&p->queue, r);
 			}
 		}
@@ -310,18 +317,11 @@ int pipe_write(pipe_t *p, unsigned mode, request_t *r, int *block)
 		PIPE_TRACE("write broken pipe");
 		bytes = -EPIPE;
 	}
+
+	r->msg.o.io.err = bytes;
 	mutexUnlock(p->lock);
 
-	return bytes;
-}
-
-
-static request_t *pipe_write_op(object_t *o, request_t *r)
-{
-	int block = 0;
-
-	r->msg.o.io.err = pipe_write((pipe_t *)o, r->msg.i.io.mode, r, &block);
-
+	/* Request enqueued */
 	if (block)
 		return NULL;
 
@@ -329,16 +329,23 @@ static request_t *pipe_write_op(object_t *o, request_t *r)
 }
 
 
-int pipe_read(pipe_t *p, unsigned mode, request_t *r, int *block)
+static request_t *pipe_read_op(object_t *o, request_t *r)
 {
+	pipe_t *p = (pipe_t *)o;
 	int sz = rq_sz(r), bytes = 0, c, was_full;
 	void *buf = rq_buf(r);
+	int block = 0;
+	unsigned mode = r->msg.i.io.mode;
 
-	if (!sz)
-		return 0;
+	if (sz == 0) {
+		r->msg.o.io.err = 0;
+		return r;
+	}
 
-	if (pipe_lock(p->lock, mode & O_NONBLOCK) < 0)
-		return -EWOULDBLOCK;
+	if (pipe_lock(p->lock, mode & O_NONBLOCK) < 0) {
+		r->msg.o.io.err = -EWOULDBLOCK;
+		return r;
+	}
 
 	/* read from buffer */
 	was_full = p->full;
@@ -371,26 +378,19 @@ int pipe_read(pipe_t *p, unsigned mode, request_t *r, int *block)
 	}
 	else if (!bytes) {
 		PIPE_TRACE("read blocked");
-		*block = 1;
+		block = 1;
 		LIST_ADD(&p->queue, r);
 	}
 
+	if (bytes == -EPIPE)
+		r->msg.o.io.err = 0;
+	else
+		r->msg.o.io.err = bytes;
 	mutexUnlock(p->lock);
-	return bytes;
-}
 
-
-static request_t *pipe_read_op(object_t *o, request_t *r)
-{
-	int block = 0;
-
-	r->msg.o.io.err = pipe_read((pipe_t *)o, r->msg.i.io.mode, r, &block);
-
+	/* Request enqueued */
 	if (block)
 		return NULL;
-
-	if (r->msg.o.io.err == -EPIPE)
-		r->msg.o.io.err = 0;
 
 	return r;
 }
