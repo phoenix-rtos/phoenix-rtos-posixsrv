@@ -8,8 +8,6 @@
 
 include ../phoenix-rtos-build/Makefile.common
 
-CFLAGS += $(BOARD_CONFIG)
-
 .DEFAULT_GOAL := all
 
 # single component in this whole repo
