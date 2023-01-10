@@ -61,6 +61,7 @@ static request_t *zero_read_op(object_t *o, request_t *r)
 }
 
 
+#ifndef NOPRNG
 static request_t *random_read_op(object_t *o, request_t *r)
 {
 	int len = r->msg.o.size;
@@ -80,6 +81,7 @@ static request_t *random_read_op(object_t *o, request_t *r)
 	rq_setResponse(r, r->msg.o.size);
 	return r;
 }
+#endif
 
 
 static request_t *null_getattr_op(object_t *o, request_t *r)
@@ -132,6 +134,8 @@ static operations_t zero_ops = {
 	.release = (void *)free,
 };
 
+
+#ifndef NOPRNG
 static operations_t random_ops = {
 	.handlers = { NULL },
 	.open = nothing_op,
@@ -141,6 +145,7 @@ static operations_t random_ops = {
 	.getattr = zero_getattr_op,
 	.release = (void *)free,
 };
+#endif
 
 
 int special_init()
@@ -165,10 +170,12 @@ int special_init()
 	if ((o = malloc(sizeof(*o))) == NULL)
 		return -ENOMEM;
 
+#ifndef NOPRNG
 	srand(time(NULL));
 	object_create(o, &random_ops);
 	err = object_link(o, "/dev/urandom");
 	object_put(o);
+#endif
 
 	return err;
 }
