@@ -14,6 +14,12 @@ include ../phoenix-rtos-build/Makefile.common
 NAME := posixsrv
 SRCS := $(wildcard *.c)
 LIBS := libtty
+
+# special flag depends on project
+ifeq ($(POSIXSRV_PRNG), n)
+	LOCAL_CFLAGS += -DNOPRNG
+endif
+
 include $(binary.mk)
 
 ALL_COMPONENTS := posixsrv
