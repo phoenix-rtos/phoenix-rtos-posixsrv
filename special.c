@@ -33,6 +33,22 @@
 #include "posixsrv_private.h"
 
 
+static request_t *special_link(object_t *o, request_t *r)
+{
+	object_ref(o);
+	rq_setResponse(r, 0);
+	return r;
+}
+
+
+static request_t *special_unlink(object_t *o, request_t *r)
+{
+	object_put(o);
+	rq_setResponse(r, 0);
+	return r;
+}
+
+
 static request_t *nothing_op(object_t *o, request_t *r)
 {
 	return r;
@@ -118,6 +134,8 @@ static operations_t null_ops = {
 	.write = null_write_op,
 	.getattr = null_getattr_op,
 	.truncate = nothing_op,
+	.link = special_link,
+	.unlink = special_unlink,
 	.release = (void *)free,
 };
 
@@ -129,6 +147,8 @@ static operations_t zero_ops = {
 	.read = zero_read_op,
 	.write = null_write_op,
 	.getattr = zero_getattr_op,
+	.link = special_link,
+	.unlink = special_unlink,
 	.release = (void *)free,
 };
 
@@ -139,6 +159,8 @@ static operations_t random_ops = {
 	.read = random_read_op,
 	.write = null_write_op,
 	.getattr = zero_getattr_op,
+	.link = special_link,
+	.unlink = special_unlink,
 	.release = (void *)free,
 };
 
