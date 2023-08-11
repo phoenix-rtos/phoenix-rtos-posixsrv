@@ -69,6 +69,13 @@ static request_t *null_write_op(object_t *o, request_t *r)
 }
 
 
+static request_t *full_write_op(object_t *o, request_t *r)
+{
+	rq_setResponse(r, -ENOSPC);
+	return r;
+}
+
+
 static request_t *zero_read_op(object_t *o, request_t *r)
 {
 	memset(r->msg.o.data, 0, r->msg.o.size);
@@ -145,6 +152,20 @@ static const operations_t zero_ops = {
 	.release = special_release
 };
 
+
+static const operations_t full_ops = {
+	.handlers = { NULL },
+	.open = nothing_op,
+	.close = nothing_op,
+	.read = zero_read_op,
+	.write = full_write_op,
+	.getattr = zero_getattr_op,
+	.link = special_link,
+	.unlink = special_unlink,
+	.release = special_release,
+};
+
+
 static const operations_t random_ops = {
 	.handlers = { NULL },
 	.open = nothing_op,
@@ -202,6 +223,11 @@ int special_init()
 
 	srand(time(NULL));
 	err = special_createFile("/dev/urandom", &random_ops);
+	if (err < 0) {
+		return err;
+	}
+
+	err = special_createFile("/dev/full", &full_ops);
 	if (err < 0) {
 		return err;
 	}
