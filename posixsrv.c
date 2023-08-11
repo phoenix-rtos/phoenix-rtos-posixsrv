@@ -128,7 +128,7 @@ void object_put(object_t *o)
 }
 
 
-int object_create(object_t *o, operations_t *ops)
+int object_create(object_t *o, const operations_t *ops)
 {
 	o->destroy = 0;
 	o->operations = ops;
@@ -146,7 +146,7 @@ int object_create(object_t *o, operations_t *ops)
 }
 
 
-int object_link(object_t *o, char *path)
+int object_link(object_t *o, const char *path)
 {
 	TRACE("linking %d to %s", o->linkage.id, path);
 	oid_t oid;
