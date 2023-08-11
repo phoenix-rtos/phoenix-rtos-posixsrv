@@ -5,8 +5,8 @@
  *
  * POSIX server - /dev/{zero,null}
  *
- * Copyright 2018 Phoenix Systems
- * Author: Jan Sikorski
+ * Copyright 2018, 2023 Phoenix Systems
+ * Author: Jan Sikorski, Aleksander Kaminski
  *
  * This file is part of Phoenix-RTOS.
  *
@@ -79,18 +79,17 @@ static request_t *zero_read_op(object_t *o, request_t *r)
 
 static request_t *random_read_op(object_t *o, request_t *r)
 {
-	int len = r->msg.o.size;
-	uint8_t* buf = r->msg.o.data;
-
-	while (len >= 4) {
-		*((int*)buf) = rand();
-		len -= 4;
-		buf += 4;
-	}
+	int randbuff[16];
+	size_t i, limit, chunk, len = r->msg.o.size;
 
 	while (len > 0) {
-		*buf++ = (uint8_t) rand();
-		len -= 1;
+		chunk = (len > sizeof(randbuff)) ? sizeof(randbuff) : len;
+		limit = (chunk + sizeof(*randbuff) - 1) / sizeof(*randbuff);
+		for (size_t i = 0; i < limit; ++i) {
+			randbuff[i] = rand();
+		}
+		memcpy(r->msg.o.data, randbuff, chunk);
+		len -= chunk;
 	}
 
 	rq_setResponse(r, r->msg.o.size);
