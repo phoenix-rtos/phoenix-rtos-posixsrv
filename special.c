@@ -79,12 +79,12 @@ static request_t *zero_read_op(object_t *o, request_t *r)
 
 static request_t *random_read_op(object_t *o, request_t *r)
 {
-	int randbuff[16];
-	size_t i, limit, chunk, len = r->msg.o.size;
+	size_t len = r->msg.o.size;
 
 	while (len > 0) {
-		chunk = (len > sizeof(randbuff)) ? sizeof(randbuff) : len;
-		limit = (chunk + sizeof(*randbuff) - 1) / sizeof(*randbuff);
+		int randbuff[16];
+		size_t chunk = (len > sizeof(randbuff)) ? sizeof(randbuff) : len;
+		size_t limit = (chunk + sizeof(*randbuff) - 1) / sizeof(*randbuff);
 		for (size_t i = 0; i < limit; ++i) {
 			randbuff[i] = rand();
 		}
@@ -99,13 +99,7 @@ static request_t *random_read_op(object_t *o, request_t *r)
 
 static request_t *null_getattr_op(object_t *o, request_t *r)
 {
-	int err;
-
-	if (r->msg.i.attr.type == atPollStatus)
-		err = POLLOUT;
-	else
-		err = -EINVAL;
-
+	int err = (r->msg.i.attr.type == atPollStatus) ? POLLOUT : -EINVAL;
 	rq_setResponse(r, err);
 	return r;
 }
@@ -113,19 +107,19 @@ static request_t *null_getattr_op(object_t *o, request_t *r)
 
 static request_t *zero_getattr_op(object_t *o, request_t *r)
 {
-	int err;
-
-	if (r->msg.i.attr.type == atPollStatus)
-		err = POLLIN;
-	else
-		err = -EINVAL;
-
+	int err = (r->msg.i.attr.type == atPollStatus) ? POLLOUT : -EINVAL;
 	rq_setResponse(r, err);
 	return r;
 }
 
 
-static operations_t null_ops = {
+static void special_release(object_t *o)
+{
+	free(o);
+}
+
+
+static const operations_t null_ops = {
 	.handlers = { NULL },
 	.open = nothing_op,
 	.close = nothing_op,
@@ -135,11 +129,11 @@ static operations_t null_ops = {
 	.truncate = nothing_op,
 	.link = special_link,
 	.unlink = special_unlink,
-	.release = (void *)free,
+	.release = special_release
 };
 
 
-static operations_t zero_ops = {
+static const operations_t zero_ops = {
 	.handlers = { NULL },
 	.open = nothing_op,
 	.close = nothing_op,
@@ -148,10 +142,10 @@ static operations_t zero_ops = {
 	.getattr = zero_getattr_op,
 	.link = special_link,
 	.unlink = special_unlink,
-	.release = (void *)free,
+	.release = special_release
 };
 
-static operations_t random_ops = {
+static const operations_t random_ops = {
 	.handlers = { NULL },
 	.open = nothing_op,
 	.close = nothing_op,
@@ -160,36 +154,57 @@ static operations_t random_ops = {
 	.getattr = zero_getattr_op,
 	.link = special_link,
 	.unlink = special_unlink,
-	.release = (void *)free,
+	.release = special_release
 };
 
 
-int special_init()
+static int special_createFile(const char *path, const operations_t *ops)
 {
 	object_t *o;
 	int err;
 
-	if ((o = malloc(sizeof(*o))) == NULL)
+	o = malloc(sizeof(*o));
+	if (o == NULL) {
 		return -ENOMEM;
+	}
 
-	object_create(o, &null_ops);
-	err = object_link(o, "/dev/null");
+	err = object_create(o, ops);
+	if (err < 0) {
+		free(o);
+		return err;
+	}
+
+	err = object_link(o, path);
+	if (err < 0) {
+		object_put(o);
+		return err;
+	}
+
 	object_put(o);
 
-	if ((o = malloc(sizeof(*o))) == NULL)
-		return -ENOMEM;
+	return 0;
+}
 
-	object_create(o, &zero_ops);
-	err = object_link(o, "/dev/zero");
-	object_put(o);
 
-	if ((o = malloc(sizeof(*o))) == NULL)
-		return -ENOMEM;
+int special_init()
+{
+	int err;
+
+	err = special_createFile("/dev/null", &null_ops);
+	if (err < 0) {
+		return err;
+	}
+
+	err = special_createFile("/dev/zero", &zero_ops);
+	if (err < 0) {
+		return err;
+	}
 
 	srand(time(NULL));
-	object_create(o, &random_ops);
-	err = object_link(o, "/dev/urandom");
-	object_put(o);
+	err = special_createFile("/dev/urandom", &random_ops);
+	if (err < 0) {
+		return err;
+	}
 
-	return err;
+	return 0;
 }

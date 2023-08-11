@@ -71,7 +71,7 @@ typedef struct {
 
 typedef struct _object_t {
 	idnode_t linkage;
-	operations_t *operations;
+	const operations_t *operations;
 	int refs, destroy;
 } object_t;
 
@@ -103,7 +103,7 @@ extern int rq_id(request_t *r);
 extern unsigned srv_port(void);
 
 
-extern int object_link(object_t *o, char *path);
+extern int object_link(object_t *o, const char *path);
 
 
 static inline int object_id(object_t *o)
@@ -124,7 +124,7 @@ extern void object_ref(object_t *o);
 extern void object_put(object_t *o);
 
 
-extern int object_create(object_t *o, operations_t *ops);
+extern int object_create(object_t *o, const operations_t *ops);
 
 
 extern int pipe_create(int type, int *id, unsigned open);
