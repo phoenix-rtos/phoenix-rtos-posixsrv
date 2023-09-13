@@ -36,7 +36,7 @@ typedef struct request_t {
 
 	struct _object_t *object;
 	time_t wakeup;
-	unsigned long rid;
+	msg_rid_t rid;
 	msg_t msg;
 
 	/* Subsystem specific per-request state */
