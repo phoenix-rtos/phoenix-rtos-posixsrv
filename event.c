@@ -881,10 +881,11 @@ static int event_object_link(object_t *o, char *path)
 }
 
 
-int event_init(void)
+int event_init(unsigned *port)
 {
-	if (mutexCreate(&event_common.lock) < 0)
+	if (mutexCreate(&event_common.lock) < 0) {
 		return -ENOMEM;
+	}
 
 	portCreate(&event_common.port);
 
@@ -897,5 +898,9 @@ int event_init(void)
 	event_object_link(&event_common.sink, "/dev/event/sink");
 	event_object_link(&event_common.qmx, "/dev/event/queue");
 
-	return event_common.port;
+	if (port != NULL) {
+		*port = event_common.port;
+	}
+
+	return 0;
 }
