@@ -10,13 +10,18 @@ include ../phoenix-rtos-build/Makefile.common
 
 .DEFAULT_GOAL := all
 
+NAME := libposixsrv
+SRCS := $(filter-out srv.c, $(wildcard *.c))
+HEADERS := posixsrv.h
+include $(static-lib.mk)
+
 # single component in this whole repo
 NAME := posixsrv
 SRCS := $(wildcard *.c)
 LIBS := libtty
 include $(binary.mk)
 
-ALL_COMPONENTS := posixsrv
+ALL_COMPONENTS := posixsrv libposixsrv
 DEFAULT_COMPONENTS := $(ALL_COMPONENTS)
 
 # create generic targets

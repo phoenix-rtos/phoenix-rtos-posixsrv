@@ -3,10 +3,10 @@
  *
  * libphoenix
  *
- * POSIX implementation - server
+ * POSIX server - implementation
  *
- * Copyright 2018 Phoenix Systems
- * Author: Jan Sikorski
+ * Copyright 2018, 2023 Phoenix Systems
+ * Author: Jan Sikorski, Gerard Swiderski
  *
  * This file is part of Phoenix-RTOS.
  *
@@ -34,8 +34,11 @@
 
 #include "posixsrv_private.h"
 
-//#define TRACE(str, ...) printf("posixsrv: " str "\n", ##__VA_ARGS__)
+#if 0
+#define TRACE(str, ...) printf("posixsrv: " str "\n", ##__VA_ARGS__)
+#else
 #define TRACE(str, ...)
+#endif
 
 
 struct {
@@ -50,15 +53,12 @@ struct {
 		int id;
 		object_t *o;
 	} cache;
-
-	char stacks[4][0x1000] __attribute__ ((aligned(8)));
 } posixsrv_common;
 
 
-static int fail(const char *str)
+static void fail(const char *str)
 {
 	printf("posixsrv fail: %s\n", str);
-	exit(EXIT_FAILURE);
 }
 
 
@@ -221,7 +221,7 @@ void rq_wakeup(request_t *r)
 }
 
 
-static void rq_timeoutthr(void *arg)
+void rq_timeoutthr(void *arg)
 {
 	request_t *r;
 	time_t now, timeout;
@@ -353,49 +353,49 @@ void posixsrvthr(void *arg)
 }
 
 
-int main(int argc, char **argv)
+int posixsrv_init(unsigned *srvPort, unsigned *eventPort)
 {
-	oid_t fs;
-	int i;
-	int events_port;
-
 	idtree_init(&posixsrv_common.objects);
 	lib_rbInit(&posixsrv_common.timeout, rq_cmp, NULL);
 	mutexCreate(&posixsrv_common.lock);
 	condCreate(&posixsrv_common.cond);
 
-	while (lookup("/", NULL, &fs) < 0)
-		usleep(5000);
-
-	if (portCreate(&posixsrv_common.port) < 0)
+	if (portCreate(&posixsrv_common.port) < 0) {
 		fail("port create");
+		return -1;
+	}
 
 	mkdir("/dev", 0777);
 	mkdir("/dev/posix", 0777);
 
-	if (special_init() < 0)
+	if (special_init() < 0) {
 		fail("special init");
+		return -1;
+	}
 
-	if ((events_port = event_init()) < 0)
+	if (event_init(eventPort) < 0) {
 		fail("event init");
+		return -1;
+	}
 
-	if (pipe_init() < 0)
+	if (pipe_init() < 0) {
 		fail("pipe init");
+		return -1;
+	}
 
-	if (pty_init() < 0)
+	if (pty_init() < 0) {
 		fail("pty init");
+		return -1;
+	}
 
-	if (tmpfile_init() < 0)
+	if (tmpfile_init() < 0) {
 		fail("tmpfile init");
+		return -1;
+	}
 
-	openlog("posixsrv", LOG_CONS, LOG_DAEMON);
+	if (srvPort != NULL) {
+		*srvPort = posixsrv_common.port;
+	}
 
-	beginthread(posixsrvthr, 4, posixsrv_common.stacks[0], sizeof(posixsrv_common.stacks[0]), (void *)events_port);
-
-	for (i = 1; i < sizeof(posixsrv_common.stacks) / sizeof(posixsrv_common.stacks[0]); ++i)
-		beginthread(posixsrvthr, 4, posixsrv_common.stacks[i], sizeof(posixsrv_common.stacks[i]), (void *)posixsrv_common.port);
-
-
-	rq_timeoutthr(NULL);
 	return 0;
 }
