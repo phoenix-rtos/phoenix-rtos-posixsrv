@@ -141,7 +141,7 @@ static inline pty_t *pty_slave(object_t *slave)
 static void pty_destroy(pty_t *pty)
 {
 	if (pty->slave_refs || pty->slave.refs || pty->master.refs)
-		log_error("(%d): %d slave refs, %d slave object refs, %d master object refs", object_id(&pty->master), pty->slave_refs, pty->slave.refs, pty->master.refs);
+		log_error("(%d): %d slave refs, %d slave object refs, %d master object refs", posixsrv_object_id(&pty->master), pty->slave_refs, pty->slave.refs, pty->master.refs);
 
 	libtty_destroy(&pty->tty);
 	resourceDestroy(pty->mutex);
@@ -155,7 +155,7 @@ static void pts_destroy(object_t *o)
 	pty_t *pty = pty_slave(o);
 
 	if ((pty->state & MASTER_OPEN) || pty->master.refs)
-		log_error("(%d): %d slave refs, %d slave object refs, %d master object refs", object_id(&pty->master), pty->slave_refs, pty->slave.refs, pty->master.refs);
+		log_error("(%d): %d slave refs, %d slave object refs, %d master object refs", posixsrv_object_id(&pty->master), pty->slave_refs, pty->slave.refs, pty->master.refs);
 
 	pty_destroy(pty);
 }
@@ -167,7 +167,7 @@ static void unlink_pts(pty_t *pty)
 	char buf[32];
 	msg_t msg;
 
-	len = snprintf(buf, sizeof(buf), "%d", object_id(&pty->slave));
+	len = snprintf(buf, sizeof(buf), "%d", posixsrv_object_id(&pty->slave));
 	memset(&msg, 0, sizeof(msg));
 
 	if (lookup("/dev/pts", NULL, &msg.i.ln.dir) == EOK) {
@@ -187,10 +187,10 @@ static void ptm_destroy(object_t *o)
 
 	mutexLock(pty->mutex);
 	if (!pty->slave_refs)
-		object_destroy(&pty->slave);
+		posixsrv_object_destroy(&pty->slave);
 	mutexUnlock(pty->mutex);
 
-	object_put(&pty->slave);
+	posixsrv_object_put(&pty->slave);
 }
 
 
@@ -216,7 +216,7 @@ static request_t *_pts_write(pty_t *pty, request_t *r)
 
 static request_t *pts_write_op(object_t *o, request_t *r)
 {
-	PTY_TRACE("pts_write(%d)", object_id(o));
+	PTY_TRACE("pts_write(%d)", posixsrv_object_id(o));
 	pty_t *pty = pty_slave(o);
 
 	mutexLock(pty->mutex);
@@ -262,7 +262,7 @@ static request_t *_pts_read(pty_t *pty, request_t *r)
 
 static request_t *pts_read_op(object_t *o, request_t *r)
 {
-	PTY_TRACE("pts_read(%d)", object_id(o));
+	PTY_TRACE("pts_read(%d)", posixsrv_object_id(o));
 	pty_t *pty = pty_slave(o);
 
 	libtty_read_state_init(&r->pts_read);
@@ -275,7 +275,7 @@ static request_t *pts_read_op(object_t *o, request_t *r)
 
 static request_t *pts_open_op(object_t *o, request_t *r)
 {
-	PTY_TRACE("pts_open(%d)", object_id(o));
+	PTY_TRACE("pts_open(%d)", posixsrv_object_id(o));
 	pty_t *pty = pty_slave(o);
 	int err = EOK;
 
@@ -297,7 +297,7 @@ static request_t *pts_open_op(object_t *o, request_t *r)
 
 static request_t *pts_close_op(object_t *o, request_t *r)
 {
-	PTY_TRACE("pts_close(%d)", object_id(o));
+	PTY_TRACE("pts_close(%d)", posixsrv_object_id(o));
 	pty_t *pty = pty_slave(o);
 	int err = EOK;
 
@@ -311,7 +311,7 @@ static request_t *pts_close_op(object_t *o, request_t *r)
 		pty_cancelRequests(pty);
 
 		if (pty->state & PTY_CLOSING)
-			object_destroy(&pty->slave);
+			posixsrv_object_destroy(&pty->slave);
 	}
 
 	mutexUnlock(pty->mutex);
@@ -341,7 +341,7 @@ static request_t *pts_devctl_op(object_t *o, request_t *r)
 
 static request_t *ptm_write_op(object_t *o, request_t *r)
 {
-	PTY_TRACE("ptm_write(%d, %d)", object_id(o), r->msg.i.size);
+	PTY_TRACE("ptm_write(%d, %d)", posixsrv_object_id(o), r->msg.i.size);
 	pty_t *pty = pty_master(o);
 	size_t i;
 	int wake_reader = 0;
@@ -364,8 +364,8 @@ static request_t *ptm_write_op(object_t *o, request_t *r)
 	mutexUnlock(pty->mutex);
 
 	if (wake_reader && (pty->evmask & (1 << evtDataIn))) {
-		event.oid.port = srv_port();
-		event.oid.id = object_id(&pty->slave);
+		event.oid.port = posixsrv_port();
+		event.oid.id = posixsrv_object_id(&pty->slave);
 		event.type = evtDataIn;
 
 		eventsSend(&event, 1);
@@ -415,8 +415,8 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 	}
 
 	if (wake_writer && (pty->evmask & (1 << evtDataOut))) {
-		event.oid.port = srv_port();
-		event.oid.id = object_id(&pty->slave);
+		event.oid.port = posixsrv_port();
+		event.oid.id = posixsrv_object_id(&pty->slave);
 		event.type = evtDataOut;
 
 		eventsSend(&event, 1);
@@ -428,7 +428,7 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 
 static request_t *ptm_read_op(object_t *o, request_t *r)
 {
-	PTY_TRACE("ptm_read(%d)", object_id(o));
+	PTY_TRACE("ptm_read(%d)", posixsrv_object_id(o));
 	pty_t *pty = pty_master(o);
 
 	mutexLock(pty->mutex);
@@ -458,7 +458,7 @@ static request_t *ptm_close_op(object_t *o, request_t *r)
 
 		libtty_signal_pgrp(&pty->tty, SIGHUP);
 		libtty_close(&pty->tty);
-		object_destroy(&pty->master);
+		posixsrv_object_destroy(&pty->master);
 
 	}
 	mutexUnlock(pty->mutex);
@@ -470,7 +470,7 @@ static request_t *ptm_close_op(object_t *o, request_t *r)
 
 static request_t *pts_setattr_op(object_t *o, request_t *r)
 {
-	PTY_TRACE("pts_setattr(%d)", object_id(o));
+	PTY_TRACE("pts_setattr(%d)", posixsrv_object_id(o));
 	pty_t *pty = pty_slave(o);
 
 	if (r->msg.i.attr.type == atEventMask) {
@@ -488,7 +488,7 @@ static request_t *pts_setattr_op(object_t *o, request_t *r)
 
 static request_t *ptm_setattr_op(object_t *o, request_t *r)
 {
-	PTY_TRACE("ptm_setattr(%d)", object_id(o));
+	PTY_TRACE("ptm_setattr(%d)", posixsrv_object_id(o));
 
 	pty_t *pty = pty_master(o);
 
@@ -548,7 +548,7 @@ static request_t *ptm_getattr_op(object_t *o, request_t *r)
 
 static request_t *ptm_devctl_op(object_t *o, request_t *r)
 {
-	PTY_TRACE("ptm_devctl(%d)", object_id(o));
+	PTY_TRACE("ptm_devctl(%d)", posixsrv_object_id(o));
 	pty_t *pty = pty_master(o);
 	int err = -EINVAL;
 	unsigned long request;
@@ -562,7 +562,7 @@ static request_t *ptm_devctl_op(object_t *o, request_t *r)
 
 	switch (request) {
 	case TIOCGPTN: /* get pty number */
-		ptyid = object_id(&pty->slave);
+		ptyid = posixsrv_object_id(&pty->slave);
 		out_data = &ptyid;
 		err = EOK;
 		break;
@@ -639,16 +639,16 @@ static int ptm_create(int *id)
 	pty->state = MASTER_OPEN | SLAVE_LOCKED;
 	pty->slave_refs = 0;
 
-	object_create(&pty->master, &ptm_ops);
-	object_create(&pty->slave, &pts_ops);
+	posixsrv_object_create(&pty->master, &ptm_ops);
+	posixsrv_object_create(&pty->slave, &pts_ops);
 
-	*id = object_id(&pty->master);
-	oid.port = srv_port();
-	oid.id = object_id(&pty->slave);
+	*id = posixsrv_object_id(&pty->master);
+	oid.port = posixsrv_port();
+	oid.id = posixsrv_object_id(&pty->slave);
 	snprintf(path + sizeof("/dev/pts"), sizeof(PTS_NAME_PADDING), "%d", (int)oid.id);
 
-	object_put(&pty->master);
-/*	object_put(&pty->slave); - Keep one reference for the master */
+	posixsrv_object_put(&pty->master);
+/*	posixsrv_object_put(&pty->slave); - Keep one reference for the master */
 
 	if ((err = create_dev(&oid, path)) < 0) {
 		log_error("create_dev(): %s", strerror(err));
@@ -663,7 +663,7 @@ static int ptm_create(int *id)
 
 static request_t *ptmx_open_op(object_t *ptmx, request_t *r)
 {
-	PTY_TRACE("ptmx_open(%d)", object_id(ptmx));
+	PTY_TRACE("ptmx_open(%d)", posixsrv_object_id(ptmx));
 	int id, err;
 
 	err = ptm_create(&id);
@@ -684,8 +684,8 @@ int pty_init()
 	if ((o = malloc(sizeof(*o))) == NULL)
 		return -ENOMEM;
 
-	object_create(o, &ptmx_ops);
-	err = object_link(o, "/dev/ptmx");
-	object_put(o);
+	posixsrv_object_create(o, &ptmx_ops);
+	err = posixsrv_object_link(o, "/dev/ptmx");
+	posixsrv_object_put(o);
 	return err;
 }
