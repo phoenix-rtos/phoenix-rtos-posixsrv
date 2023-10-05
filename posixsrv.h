@@ -23,10 +23,10 @@ int posixsrv_init(unsigned *srvPort, unsigned *eventPort);
 unsigned posixsrv_port(void);
 
 
-void posixsrvthr(void *arg);
+void posixsrv_threadMain(void *arg);
 
 
-void rq_timeoutthr(void *arg);
+void posixsrv_threadRqTimeout(void *arg);
 
 
 #endif /* end of POSIXSRV_H */
