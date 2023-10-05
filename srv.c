@@ -38,26 +38,26 @@ static int fail(const char *str)
 int main(int argc, char **argv)
 {
 	oid_t fs;
-	unsigned port;
-	unsigned events_port;
+	unsigned srvPort;
+	unsigned eventPort;
 
 	while (lookup("/", NULL, &fs) < 0) {
 		usleep(5000);
 	}
 
-	if (posixsrv_init(&port, &events_port) < 0) {
+	if (posixsrv_init(&srvPort, &eventPort) < 0) {
 		fail("srv init");
 	}
 
 	openlog("posixsrv", LOG_CONS, LOG_DAEMON);
 
-	beginthread(posixsrvthr, 4, stacks[0], sizeof(stacks[0]), (void *)events_port);
+	beginthread(posixsrv_threadMain, 4, stacks[0], sizeof(stacks[0]), (void *)eventPort);
 
 	for (int i = 1; i < sizeof(stacks) / sizeof(stacks[0]); ++i) {
-		beginthread(posixsrvthr, 4, stacks[i], sizeof(stacks[i]), (void *)port);
+		beginthread(posixsrv_threadMain, 4, stacks[i], sizeof(stacks[i]), (void *)srvPort);
 	}
 
-	rq_timeoutthr(NULL);
+	posixsrv_threadRqTimeout(NULL);
 
 	/* never reached */
 	return 0;

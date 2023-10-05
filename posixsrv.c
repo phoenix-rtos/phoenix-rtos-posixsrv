@@ -221,39 +221,6 @@ void rq_wakeup(request_t *r)
 }
 
 
-void rq_timeoutthr(void *arg)
-{
-	request_t *r;
-	time_t now, timeout;
-
-	mutexLock(posixsrv_common.lock);
-
-	for (;;) {
-		if ((r = lib_treeof(request_t, linkage, lib_rbMinimum(posixsrv_common.timeout.root))) != NULL) {
-			gettime(&now, NULL);
-
-			if (r->wakeup <= now) {
-				lib_rbRemove(&posixsrv_common.timeout, &r->linkage);
-				if (r->object->operations->timeout != NULL)
-					r->object->operations->timeout(r);
-				else {
-					rq_setResponse(r, -ETIME);
-					rq_wakeup(r);
-				}
-				continue;
-			}
-
-			timeout = r->wakeup - now;
-		}
-		else {
-			timeout = 0;
-		}
-
-		condWait(posixsrv_common.cond, posixsrv_common.lock, timeout);
-	}
-}
-
-
 int rq_id(request_t *r)
 {
 	int id;
@@ -311,7 +278,7 @@ int rq_id(request_t *r)
 }
 
 
-void posixsrvthr(void *arg)
+void posixsrv_threadMain(void *arg)
 {
 	object_t *o;
 	unsigned port = (unsigned)arg;
@@ -326,15 +293,18 @@ void posixsrvthr(void *arg)
 			}
 			r->port = port;
 		}
-		if (msgRecv(port, &r->msg, &r->rid) < 0)
+
+		if (msgRecv(port, &r->msg, &r->rid) < 0) {
 			continue;
+		}
 
 		o = posixsrv_object_get(rq_id(r));
 
 		/* Can't handle msg - wrong object id or wrong operation */
 		if (o == NULL || o->operations->handlers[r->msg.type] == NULL) {
-			if (o != NULL)
+			if (o != NULL) {
 				posixsrv_object_put(o);
+			}
 			r->msg.o.io.err = -EINVAL;
 			msgRespond(port, &r->msg, r->rid);
 			continue;
@@ -345,10 +315,46 @@ void posixsrvthr(void *arg)
 
 		/* If an operation returns NULL, it is up to a module to
 		 * respond to this msg later and free the request */
-		if (r != NULL)
+		if (r != NULL) {
 			msgRespond(port, &r->msg, r->rid);
+		}
 
 		posixsrv_object_put(o);
+	}
+}
+
+
+void posixsrv_threadRqTimeout(void *arg)
+{
+	request_t *r;
+	time_t now, timeout;
+
+	mutexLock(posixsrv_common.lock);
+
+	for (;;) {
+		r = lib_treeof(request_t, linkage, lib_rbMinimum(posixsrv_common.timeout.root));
+		if (r != NULL) {
+			gettime(&now, NULL);
+
+			if (r->wakeup <= now) {
+				lib_rbRemove(&posixsrv_common.timeout, &r->linkage);
+				if (r->object->operations->timeout != NULL) {
+					r->object->operations->timeout(r);
+				}
+				else {
+					rq_setResponse(r, -ETIME);
+					rq_wakeup(r);
+				}
+				continue;
+			}
+
+			timeout = r->wakeup - now;
+		}
+		else {
+			timeout = 0;
+		}
+
+		condWait(posixsrv_common.cond, posixsrv_common.lock, timeout);
 	}
 }
 
