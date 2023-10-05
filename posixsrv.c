@@ -62,13 +62,13 @@ static void fail(const char *str)
 }
 
 
-void object_destroy(object_t *o)
+void posixsrv_object_destroy(object_t *o)
 {
 	o->destroy = 1;
 }
 
 
-object_t *object_get(int id)
+object_t *posixsrv_object_get(int id)
 {
 	object_t *o;
 
@@ -96,7 +96,7 @@ object_t *object_get(int id)
 }
 
 
-void object_ref(object_t *o)
+void posixsrv_object_ref(object_t *o)
 {
 	while (mutexLock(posixsrv_common.lock) < 0);
 	o->refs++;
@@ -104,7 +104,7 @@ void object_ref(object_t *o)
 }
 
 
-void object_put(object_t *o)
+void posixsrv_object_put(object_t *o)
 {
 	while (mutexLock(posixsrv_common.lock) < 0);
 
@@ -128,7 +128,7 @@ void object_put(object_t *o)
 }
 
 
-int object_create(object_t *o, const operations_t *ops)
+int posixsrv_object_create(object_t *o, const operations_t *ops)
 {
 	o->destroy = 0;
 	o->operations = ops;
@@ -146,7 +146,7 @@ int object_create(object_t *o, const operations_t *ops)
 }
 
 
-int object_link(object_t *o, const char *path)
+int posixsrv_object_link(object_t *o, const char *path)
 {
 	TRACE("linking %d to %s", o->linkage.id, path);
 	oid_t oid;
@@ -158,7 +158,7 @@ int object_link(object_t *o, const char *path)
 }
 
 
-unsigned srv_port(void)
+unsigned posixsrv_port(void)
 {
 	return posixsrv_common.port;
 }
@@ -329,12 +329,12 @@ void posixsrvthr(void *arg)
 		if (msgRecv(port, &r->msg, &r->rid) < 0)
 			continue;
 
-		o = object_get(rq_id(r));
+		o = posixsrv_object_get(rq_id(r));
 
 		/* Can't handle msg - wrong object id or wrong operation */
 		if (o == NULL || o->operations->handlers[r->msg.type] == NULL) {
 			if (o != NULL)
-				object_put(o);
+				posixsrv_object_put(o);
 			r->msg.o.io.err = -EINVAL;
 			msgRespond(port, &r->msg, r->rid);
 			continue;
@@ -348,7 +348,7 @@ void posixsrvthr(void *arg)
 		if (r != NULL)
 			msgRespond(port, &r->msg, r->rid);
 
-		object_put(o);
+		posixsrv_object_put(o);
 	}
 }
 

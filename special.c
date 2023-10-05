@@ -35,7 +35,7 @@
 
 static request_t *special_link(object_t *o, request_t *r)
 {
-	object_ref(o);
+	posixsrv_object_ref(o);
 	rq_setResponse(r, 0);
 	return r;
 }
@@ -43,7 +43,7 @@ static request_t *special_link(object_t *o, request_t *r)
 
 static request_t *special_unlink(object_t *o, request_t *r)
 {
-	object_put(o);
+	posixsrv_object_put(o);
 	rq_setResponse(r, 0);
 	return r;
 }
@@ -189,19 +189,19 @@ static int special_createFile(const char *path, const operations_t *ops)
 		return -ENOMEM;
 	}
 
-	err = object_create(o, ops);
+	err = posixsrv_object_create(o, ops);
 	if (err < 0) {
 		free(o);
 		return err;
 	}
 
-	err = object_link(o, path);
+	err = posixsrv_object_link(o, path);
 	if (err < 0) {
-		object_put(o);
+		posixsrv_object_put(o);
 		return err;
 	}
 
-	object_put(o);
+	posixsrv_object_put(o);
 
 	return 0;
 }

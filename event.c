@@ -146,7 +146,7 @@ static void queue_add(evqueue_t *queue, evqueue_t **wakeq)
 
 	mutexLock(event_common.lock);
 	if (queue->next == NULL) {
-		object_ref(&queue->object);
+		posixsrv_object_ref(&queue->object);
 		LIST_ADD(wakeq, queue);
 	}
 	mutexUnlock(event_common.lock);
@@ -337,7 +337,7 @@ static evnote_t *_note_new(evqueue_t *queue, eventry_t *entry)
 
 	note->entry = entry;
 
-	object_ref(&queue->object);
+	posixsrv_object_ref(&queue->object);
 	note->queue = queue;
 
 	LIST_ADD(&entry->notes, note);
@@ -353,7 +353,7 @@ static void _note_remove(evnote_t *note)
 
 	LIST_REMOVE(&note->entry->notes, note);
 	entry_put(note->entry);
-	object_put(&note->queue->object);
+	posixsrv_object_put(&note->queue->object);
 
 	LIST_REMOVE_EX(&note->queue->notes, note, queue_next, queue_prev);
 	free(note);
@@ -498,8 +498,8 @@ static evqueue_t *queue_create(void)
 		return NULL;
 	}
 
-	object_create(&queue->object, &queue_ops);
-	object_put(&queue->object);
+	posixsrv_object_create(&queue->object, &queue_ops);
+	posixsrv_object_put(&queue->object);
 	return queue;
 }
 
@@ -659,7 +659,7 @@ static void queue_wakeup(evqueue_t *queue)
 		LIST_REMOVE(&queue, queue);
 		mutexUnlock(event_common.lock);
 
-		object_put(&q->object);
+		posixsrv_object_put(&q->object);
 	}
 
 	while ((r = filled) != NULL) {
@@ -694,7 +694,7 @@ static request_t *queue_close_op(object_t *o, request_t *r)
 	}
 	mutexUnlock(queue->lock);
 
-	object_destroy(o);
+	posixsrv_object_destroy(o);
 	return r;
 }
 
@@ -814,7 +814,7 @@ static request_t *sink_create_op(object_t *o, request_t *r)
 	else {
 		r->msg.o.create.err = EOK;
 		r->msg.o.create.oid.port = event_common.port;
-		r->msg.o.create.oid.id = object_id(&queue->object);
+		r->msg.o.create.oid.id = posixsrv_object_id(&queue->object);
 	}
 
 	return r;
@@ -863,7 +863,7 @@ static request_t *qmx_open_op(object_t *o, request_t *r)
 	if ((queue = queue_create()) == NULL)
 		rq_setResponse(r, -ENOMEM);
 	else
-		rq_setResponse(r, object_id(&queue->object));
+		rq_setResponse(r, posixsrv_object_id(&queue->object));
 
 	return r;
 }
@@ -890,8 +890,8 @@ int event_init(unsigned *port)
 	portCreate(&event_common.port);
 
 	lib_rbInit(&event_common.notes, event_cmp, NULL);
-	object_create(&event_common.sink, &sink_ops);
-	object_create(&event_common.qmx, &qmx_ops);
+	posixsrv_object_create(&event_common.sink, &sink_ops);
+	posixsrv_object_create(&event_common.qmx, &qmx_ops);
 
 	mkdir("/dev/event", 0555);
 

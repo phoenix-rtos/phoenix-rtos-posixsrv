@@ -100,31 +100,31 @@ extern void rq_timeout(request_t *r, int timeout);
 extern int rq_id(request_t *r);
 
 
-extern unsigned srv_port(void);
+extern unsigned posixsrv_port(void);
 
 
-extern int object_link(object_t *o, const char *path);
+extern int posixsrv_object_link(object_t *o, const char *path);
 
 
-static inline int object_id(object_t *o)
+static inline int posixsrv_object_id(object_t *o)
 {
 	return o->linkage.id;
 }
 
 
-extern void object_destroy(object_t *o);
+extern void posixsrv_object_destroy(object_t *o);
 
 
-extern object_t *object_get(int id);
+extern object_t *posixsrv_object_get(int id);
 
 
-extern void object_ref(object_t *o);
+extern void posixsrv_object_ref(object_t *o);
 
 
-extern void object_put(object_t *o);
+extern void posixsrv_object_put(object_t *o);
 
 
-extern int object_create(object_t *o, const operations_t *ops);
+extern int posixsrv_object_create(object_t *o, const operations_t *ops);
 
 
 extern int pipe_create(int type, int *id, unsigned open);

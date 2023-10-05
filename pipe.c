@@ -131,7 +131,7 @@ int pipe_create(int type, int *id, unsigned open)
 
 	p->full = 0;
 
-	object_create(&p->object, &pipe_ops);
+	posixsrv_object_create(&p->object, &pipe_ops);
 
 	p->rrefs = !!(open & O_RDONLY);
 	p->wrefs = !!(open & O_WRONLY);
@@ -139,9 +139,9 @@ int pipe_create(int type, int *id, unsigned open)
 	p->r = p->w = 0;
 	p->queue = NULL;
 
-	object_put(&p->object);
+	posixsrv_object_put(&p->object);
 
-	*id = object_id(&p->object);
+	*id = posixsrv_object_id(&p->object);
 
 	return EOK;
 }
@@ -151,7 +151,7 @@ static request_t *pipe_create_op(object_t *srv, request_t *r)
 {
 	int id;
 	r->msg.o.create.err = pipe_create(r->msg.i.create.type, &id, r->msg.i.create.mode);
-	r->msg.o.create.oid.port = srv_port();
+	r->msg.o.create.oid.port = posixsrv_port();
 	r->msg.o.create.oid.id = id;
 	return r;
 }
@@ -213,7 +213,7 @@ static int _pipe_write(pipe_t *p, void *buf, size_t sz)
 	if (p->w == p->r)
 		p->full = 1;
 
-	PIPE_TRACE("write %d bytes to %d", bytes, object_id(&p->object));
+	PIPE_TRACE("write %d bytes to %d", bytes, posixsrv_object_id(&p->object));
 
 	return bytes;
 }
@@ -250,7 +250,7 @@ static int _pipe_read(pipe_t *p, void *buf, size_t sz)
 	if (bytes)
 		p->full = 0;
 
-	PIPE_TRACE("read %d bytes from %d", bytes, object_id(&p->object));
+	PIPE_TRACE("read %d bytes from %d", bytes, posixsrv_object_id(&p->object));
 
 	return bytes;
 }
@@ -260,8 +260,8 @@ void pipe_event(pipe_t *p, int type)
 {
 	event_t event = { 0 };
 
-	event.oid.port = srv_port();
-	event.oid.id = object_id(&p->object);
+	event.oid.port = posixsrv_port();
+	event.oid.id = posixsrv_object_id(&p->object);
 	event.type = type;
 
 	eventsSend(&event, 1);
@@ -398,7 +398,7 @@ static request_t *pipe_read_op(object_t *o, request_t *r)
 
 int pipe_open(pipe_t *p, unsigned flags, request_t *r, int *block)
 {
-	PIPE_TRACE("open %d/%x %s", object_id(&p->object), flags, flags & O_WRONLY ? "W" : "R");
+	PIPE_TRACE("open %d/%x %s", posixsrv_object_id(&p->object), flags, flags & O_WRONLY ? "W" : "R");
 
 	if (pipe_lock(p->lock, flags & O_NONBLOCK) < 0)
 		return -EWOULDBLOCK;
@@ -466,7 +466,7 @@ static request_t *pipe_open_op(object_t *o, request_t *r)
 
 int pipe_close(pipe_t *p, unsigned flags, request_t *r)
 {
-	PIPE_TRACE("close %d/%x %s", object_id(&p->object), flags, flags & O_WRONLY ? "W" : "R");
+	PIPE_TRACE("close %d/%x %s", posixsrv_object_id(&p->object), flags, flags & O_WRONLY ? "W" : "R");
 
 	while (mutexLock(p->lock) < 0);
 
@@ -497,7 +497,7 @@ int pipe_close(pipe_t *p, unsigned flags, request_t *r)
 	}
 
 	if (!p->wrefs && !p->rrefs && !p->link) {
-		object_destroy(&p->object);
+		posixsrv_object_destroy(&p->object);
 		mutexUnlock(p->lock);
 		return EOK;
 	}
@@ -517,7 +517,7 @@ static request_t *pipe_close_op(object_t *o, request_t *r)
 
 int pipe_link(pipe_t *p, const char *path)
 {
-	PIPE_TRACE("link %d", object_id(&p->object));
+	PIPE_TRACE("link %d", posixsrv_object_id(&p->object));
 
 	while (mutexLock(p->lock) < 0);
 	p->link++;
@@ -535,7 +535,7 @@ static request_t *pipe_link_op(object_t *o, request_t *r)
 
 int pipe_unlink(pipe_t *p, const char *path)
 {
-	PIPE_TRACE("unlink %d", object_id(&p->object));
+	PIPE_TRACE("unlink %d", posixsrv_object_id(&p->object));
 
 	while (mutexLock(p->lock) < 0);
 
@@ -547,7 +547,7 @@ int pipe_unlink(pipe_t *p, const char *path)
 	p->link--;
 
 	if (!(p->wrefs && p->rrefs) && !p->link) {
-		object_destroy(&p->object);
+		posixsrv_object_destroy(&p->object);
 		mutexUnlock(p->lock);
 		return EOK;
 	}
@@ -566,7 +566,7 @@ static request_t *pipe_unlink_op(object_t *o, request_t *r)
 
 static request_t *pipe_setattr_op(object_t *o, request_t *r)
 {
-	PIPE_TRACE("setattr %d", object_id(o));
+	PIPE_TRACE("setattr %d", posixsrv_object_id(o));
 	pipe_t *p = (pipe_t *)o;
 
 	if (r->msg.i.attr.type == atEventMask) {
@@ -584,7 +584,7 @@ static request_t *pipe_setattr_op(object_t *o, request_t *r)
 
 static request_t *pipe_getattr_op(object_t *o, request_t *r)
 {
-	PIPE_TRACE("getattr %d", object_id(o));
+	PIPE_TRACE("getattr %d", posixsrv_object_id(o));
 	int err = 0;
 	pipe_t *p = (pipe_t *)o;
 	int free;
@@ -617,8 +617,8 @@ int pipe_init()
 	if ((o = malloc(sizeof(*o))) == NULL)
 		return -ENOMEM;
 
-	object_create(o, &pipe_server_ops);
-	err = object_link(o, "/dev/posix/pipes");
-	object_put(o);
+	posixsrv_object_create(o, &pipe_server_ops);
+	err = posixsrv_object_link(o, "/dev/posix/pipes");
+	posixsrv_object_put(o);
 	return err;
 }

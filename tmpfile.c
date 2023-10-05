@@ -102,8 +102,8 @@ static request_t *tmpfile_fw_op(object_t *o, request_t *r)
 static request_t *tmpfile_close_op(object_t *o, request_t *r)
 {
 	TMP_TRACE("close operation");
-	object_destroy(o);
-	object_put(o);
+	posixsrv_object_destroy(o);
+	posixsrv_object_put(o);
 	return r;
 }
 
@@ -137,8 +137,8 @@ static int tmpfile_open(int *id)
 		return -ENOMEM;
 	}
 
-	object_create(&tmpfile->o, &tmpfile_ops);
-	*id = object_id(&tmpfile->o);
+	posixsrv_object_create(&tmpfile->o, &tmpfile_ops);
+	*id = posixsrv_object_id(&tmpfile->o);
 	asprintf(&path, "%s%d", TMPFILE_PATH, *id);
 
 	tmpfile->fd = open(path, O_RDWR | O_CREAT | O_TRUNC, DEFFILEMODE);
@@ -180,8 +180,8 @@ int tmpfile_init()
 	if ((o = malloc(sizeof(*o))) == NULL)
 		return -ENOMEM;
 
-	object_create(o, &tmpfile_server_ops);
-	err = object_link(o, "/dev/posix/tmpfile");
-	object_put(o);
+	posixsrv_object_create(o, &tmpfile_server_ops);
+	err = posixsrv_object_link(o, "/dev/posix/tmpfile");
+	posixsrv_object_put(o);
 	return err;
 }
