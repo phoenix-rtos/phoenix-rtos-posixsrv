@@ -124,7 +124,7 @@ int pipe_create(int type, int *id, unsigned open)
 		return -ENOMEM;
 	}
 
-	if ((p->buf = mmap(NULL, PIPE_BUFSZ, PROT_READ | PROT_WRITE, MAP_NONE, OID_NULL, 0)) == MAP_FAILED) {
+	if ((p->buf = mmap(NULL, PIPE_BUFSZ, PROT_READ | PROT_WRITE, MAP_ANONYMOUS, -1, 0)) == MAP_FAILED) {
 		free(p);
 		return -ENOMEM;
 	}
