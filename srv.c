@@ -51,10 +51,10 @@ int main(int argc, char **argv)
 
 	openlog("posixsrv", LOG_CONS, LOG_DAEMON);
 
-	beginthread(posixsrv_threadMain, 4, stacks[0], sizeof(stacks[0]), (void *)eventPort);
+	beginthread(posixsrv_threadMain, 4, stacks[0], sizeof(stacks[0]), (void *)(uintptr_t)eventPort);
 
 	for (int i = 1; i < sizeof(stacks) / sizeof(stacks[0]); ++i) {
-		beginthread(posixsrv_threadMain, 4, stacks[i], sizeof(stacks[i]), (void *)srvPort);
+		beginthread(posixsrv_threadMain, 4, stacks[i], sizeof(stacks[i]), (void *)(uintptr_t)srvPort);
 	}
 
 	posixsrv_threadRqTimeout(NULL);

@@ -281,7 +281,7 @@ int rq_id(request_t *r)
 void posixsrv_threadMain(void *arg)
 {
 	object_t *o;
-	unsigned port = (unsigned)arg;
+	unsigned port = (uintptr_t)arg;
 	request_t *r = NULL;
 
 	for (;;) {
