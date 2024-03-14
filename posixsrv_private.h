@@ -59,7 +59,7 @@ typedef struct {
 	union {
 		struct {
 			handler_t *open, *close, *read, *write, *truncate, *devctl,
-				*create, *destroy, *setattr, *getattr,
+				*create, *destroy, *setattr, *getattr, *getattrall,
 				*lookup, *link, *unlink, *readdir;
 			void (*release)(struct _object_t *);
 			void (*timeout)(request_t *);
@@ -84,7 +84,7 @@ static inline int rq_sz(request_t *r)
 
 static inline void *rq_buf(request_t *r)
 {
-	return (r->msg.type == mtWrite) ? r->msg.i.data : r->msg.o.data;
+	return (r->msg.type == mtWrite) ? (void *)r->msg.i.data : r->msg.o.data;
 }
 
 

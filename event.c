@@ -28,11 +28,11 @@
 #include "posix/idtree.h"
 #include "posixsrv_private.h"
 
-//#define TRACE(str, ...) printf("posixsrv event: " str "\n", ##__VA_ARGS__)
+// #define TRACE(str, ...) printf("posixsrv event: " str "\n", ##__VA_ARGS__)
 #define TRACE(str, ...)
 
 #define INITIAL_EVENT_BUF_COUNT 16
-#define GROW_EVENT_BUF(sz) (2 * (sz))
+#define GROW_EVENT_BUF(sz)      (2 * (sz))
 
 
 typedef struct _evqueue_t {
@@ -272,8 +272,8 @@ static void _entry_notify(eventry_t *entry)
 	msg_t msg;
 
 	msg.type = mtSetAttr;
+	msg.oid = entry->oid;
 	msg.i.attr.type = atEventMask;
-	memcpy(&msg.i.attr.oid, &entry->oid, sizeof(oid_t));
 	msg.i.attr.val = entry->mask;
 
 	msg.i.data = msg.o.data = NULL;
@@ -291,7 +291,7 @@ static void _note_poll(evnote_t *note)
 	msg_t msg;
 
 	msg.type = mtGetAttr;
-	memcpy(&msg.i.attr.oid, &note->entry->oid, sizeof(oid_t));
+	msg.oid = note->entry->oid;
 	msg.i.attr.type = atPollStatus;
 
 	msg.i.data = msg.o.data = NULL;
@@ -299,8 +299,9 @@ static void _note_poll(evnote_t *note)
 
 	/* TODO: have a way to update event data */
 
-	if ((msgSend(note->entry->oid.port, &msg) == EOK) && (msg.o.attr.err == EOK))
+	if ((msgSend(note->entry->oid.port, &msg) == EOK) && (msg.o.err == EOK)) {
 		note->pend |= msg.o.attr.val & note->mask;
+	}
 }
 
 
@@ -365,15 +366,15 @@ static void _note_merge(evnote_t *note, evsub_t *sub)
 	TRACE("_note_merge()");
 
 	if (sub->flags & evAdd) {
-		note->mask    |= sub->types;
+		note->mask |= sub->types;
 		note->enabled |= sub->types;
 	}
 
 	if (sub->flags & evDelete) {
-		note->pend     &= ~sub->types;
-		note->mask     &= ~sub->types;
-		note->enabled  &= ~sub->types;
-		note->oneshot  &= ~sub->types;
+		note->pend &= ~sub->types;
+		note->mask &= ~sub->types;
+		note->enabled &= ~sub->types;
+		note->oneshot &= ~sub->types;
 		note->dispatch &= ~sub->types;
 	}
 
@@ -586,7 +587,7 @@ static int queue_unpack(msg_t *msg, evsub_t **subs, int *subcnt, event_t **event
 {
 	if (msg->type == mtRead || msg->type == mtWrite) {
 		if (subs != NULL) {
-			*subs = msg->i.data;
+			*subs = (void *)msg->i.data;
 			*subcnt = msg->i.size / sizeof(evsub_t);
 		}
 
@@ -618,7 +619,9 @@ static int queue_unpack(msg_t *msg, evsub_t **subs, int *subcnt, event_t **event
 			*timeout = ioctl->timeout;
 	}
 #endif
-	else return -EINVAL;
+	else {
+		return -EINVAL;
+	}
 
 	return EOK;
 }
@@ -809,10 +812,10 @@ static request_t *sink_create_op(object_t *o, request_t *r)
 	evqueue_t *queue;
 
 	if ((queue = queue_create()) == NULL) {
-		r->msg.o.create.err = -ENOMEM;
+		r->msg.o.err = -ENOMEM;
 	}
 	else {
-		r->msg.o.create.err = EOK;
+		r->msg.o.err = EOK;
 		r->msg.o.create.oid.port = event_common.port;
 		r->msg.o.create.oid.id = posixsrv_object_id(&queue->object);
 	}

@@ -150,7 +150,7 @@ int pipe_create(int type, int *id, unsigned open)
 static request_t *pipe_create_op(object_t *srv, request_t *r)
 {
 	int id;
-	r->msg.o.create.err = pipe_create(r->msg.i.create.type, &id, r->msg.i.create.mode);
+	r->msg.o.err = pipe_create(r->msg.i.create.type, &id, r->msg.i.create.mode);
 	r->msg.o.create.oid.port = posixsrv_port();
 	r->msg.o.create.oid.id = id;
 	return r;
@@ -277,12 +277,12 @@ static request_t *pipe_write_op(object_t *o, request_t *r)
 	int mode = r->msg.i.io.mode;
 
 	if (sz == 0) {
-		r->msg.o.io.err = 0;
+		r->msg.o.err = 0;
 		return r;
 	}
 
 	if (pipe_lock(p->lock, mode & O_NONBLOCK) < 0) {
-		r->msg.o.io.err = -EWOULDBLOCK;
+		r->msg.o.err = -EWOULDBLOCK;
 		return r;
 	}
 
@@ -318,7 +318,7 @@ static request_t *pipe_write_op(object_t *o, request_t *r)
 		bytes = -EPIPE;
 	}
 
-	r->msg.o.io.err = bytes;
+	r->msg.o.err = bytes;
 	mutexUnlock(p->lock);
 
 	/* Request enqueued */
@@ -338,12 +338,12 @@ static request_t *pipe_read_op(object_t *o, request_t *r)
 	unsigned mode = r->msg.i.io.mode;
 
 	if (sz == 0) {
-		r->msg.o.io.err = 0;
+		r->msg.o.err = 0;
 		return r;
 	}
 
 	if (pipe_lock(p->lock, mode & O_NONBLOCK) < 0) {
-		r->msg.o.io.err = -EWOULDBLOCK;
+		r->msg.o.err = -EWOULDBLOCK;
 		return r;
 	}
 
@@ -382,10 +382,12 @@ static request_t *pipe_read_op(object_t *o, request_t *r)
 		LIST_ADD(&p->queue, r);
 	}
 
-	if (bytes == -EPIPE)
-		r->msg.o.io.err = 0;
-	else
-		r->msg.o.io.err = bytes;
+	if (bytes == -EPIPE) {
+		r->msg.o.err = 0;
+	}
+	else {
+		r->msg.o.err = bytes;
+	}
 	mutexUnlock(p->lock);
 
 	/* Request enqueued */
@@ -455,7 +457,7 @@ static request_t *pipe_open_op(object_t *o, request_t *r)
 {
 	int block = 0;
 
-	r->msg.o.io.err = pipe_open((pipe_t *)o, r->msg.i.openclose.flags/* | O_NONBLOCK*/, r, &block);
+	r->msg.o.err = pipe_open((pipe_t *)o, r->msg.i.openclose.flags /* | O_NONBLOCK*/, r, &block);
 
 	if (block)
 		return NULL;
@@ -509,7 +511,7 @@ int pipe_close(pipe_t *p, unsigned flags, request_t *r)
 
 static request_t *pipe_close_op(object_t *o, request_t *r)
 {
-	r->msg.o.io.err = pipe_close((pipe_t *)o, r->msg.i.openclose.flags, r);
+	r->msg.o.err = pipe_close((pipe_t *)o, r->msg.i.openclose.flags, r);
 
 	return r;
 }
@@ -528,7 +530,7 @@ int pipe_link(pipe_t *p, const char *path)
 
 static request_t *pipe_link_op(object_t *o, request_t *r)
 {
-	r->msg.o.io.err = pipe_link((pipe_t *)o, r->msg.i.data);
+	r->msg.o.err = pipe_link((pipe_t *)o, r->msg.i.data);
 	return r;
 }
 
@@ -559,7 +561,7 @@ int pipe_unlink(pipe_t *p, const char *path)
 
 static request_t *pipe_unlink_op(object_t *o, request_t *r)
 {
-	r->msg.o.io.err = pipe_unlink((pipe_t *)o, r->msg.i.data);
+	r->msg.o.err = pipe_unlink((pipe_t *)o, r->msg.i.data);
 	return r;
 }
 
@@ -571,11 +573,11 @@ static request_t *pipe_setattr_op(object_t *o, request_t *r)
 
 	if (r->msg.i.attr.type == atEventMask) {
 		r->msg.o.attr.val = p->evmask;
-		r->msg.o.attr.err = EOK;
+		r->msg.o.err = EOK;
 		p->evmask = r->msg.i.attr.val;
 	}
 	else {
-		r->msg.o.attr.err = -EINVAL;
+		r->msg.o.err = -EINVAL;
 	}
 
 	return r;
