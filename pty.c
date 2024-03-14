@@ -170,13 +170,13 @@ static void unlink_pts(pty_t *pty)
 	len = snprintf(buf, sizeof(buf), "%d", posixsrv_object_id(&pty->slave));
 	memset(&msg, 0, sizeof(msg));
 
-	if (lookup("/dev/pts", NULL, &msg.i.ln.dir) == EOK) {
+	if (lookup("/dev/pts", NULL, &msg.oid) == EOK) {
 		msg.type = mtUnlink;
 
 		msg.i.data = buf;
 		msg.i.size = len + 1;
 
-		msgSend(msg.i.ln.dir.port, &msg);
+		msgSend(msg.oid.port, &msg);
 	}
 }
 
@@ -475,11 +475,11 @@ static request_t *pts_setattr_op(object_t *o, request_t *r)
 
 	if (r->msg.i.attr.type == atEventMask) {
 		r->msg.o.attr.val = pty->evmask;
-		r->msg.o.attr.err = EOK;
+		r->msg.o.err = EOK;
 		pty->evmask = r->msg.i.attr.val;
 	}
 	else {
-		r->msg.o.attr.err = -EINVAL;
+		r->msg.o.err = -EINVAL;
 	}
 
 	return r;
@@ -494,11 +494,11 @@ static request_t *ptm_setattr_op(object_t *o, request_t *r)
 
 	if (r->msg.i.attr.type == atEventMask) {
 		r->msg.o.attr.val = pty->evmask;
-		r->msg.o.attr.err = EOK;
+		r->msg.o.err = EOK;
 		pty->evmask = r->msg.i.attr.val;
 	}
 	else {
-		r->msg.o.attr.err = -EINVAL;
+		r->msg.o.err = -EINVAL;
 	}
 
 	return r;
@@ -511,10 +511,10 @@ static request_t *pts_getattr_op(object_t *o, request_t *r)
 
 	if (r->msg.i.attr.type == atPollStatus) {
 		r->msg.o.attr.val = libtty_poll_status(&pty->tty) & r->msg.i.attr.val;
-		r->msg.o.attr.err = EOK;
+		r->msg.o.err = EOK;
 	}
 	else {
-		r->msg.o.attr.err = -EINVAL;
+		r->msg.o.err = -EINVAL;
 	}
 
 	return r;
@@ -536,10 +536,10 @@ static request_t *ptm_getattr_op(object_t *o, request_t *r)
 			rev |= POLLOUT;
 
 		r->msg.o.attr.val = rev;
-		r->msg.o.attr.err = EOK;
+		r->msg.o.err = EOK;
 	}
 	else {
-		r->msg.o.attr.err = -EINVAL;
+		r->msg.o.err = -EINVAL;
 	}
 
 	return r;

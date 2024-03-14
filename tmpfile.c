@@ -65,18 +65,15 @@ typedef struct _tmpfile_t {
 
 void tmpfile_set_msg_oid(msg_t *msg, oid_t *oid)
 {
-	switch(msg->type) {
-
-	case mtGetAttr:
-		memcpy(&msg->i.attr.oid, oid, sizeof(oid_t));
-		break;
-	case mtRead:
-	case mtWrite:
-		memcpy(&msg->i.io.oid, oid, sizeof(oid_t));
-		break;
-	default:
-		TMP_TRACE("can't set oid for msg type %d", msg->type);
-		break;
+	switch (msg->type) {
+		case mtGetAttr:
+		case mtRead:
+		case mtWrite:
+			*oid = msg->oid;
+			break;
+		default:
+			TMP_TRACE("can't set oid for msg type %d", msg->type);
+			break;
 	}
 }
 

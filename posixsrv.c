@@ -199,15 +199,15 @@ void rq_setResponse(request_t *r, int response)
 	case mtGetAttr:
 	case mtSetAttr:
 		if (response < 0) {
-			r->msg.o.attr.err = response;
+			r->msg.o.err = response;
 			break;
 		}
 		r->msg.o.attr.val = response;
-		r->msg.o.attr.err = EOK;
+		r->msg.o.err = EOK;
 		break;
 	default:
 		/* TODO: other cases */
-		r->msg.o.io.err = response;
+		r->msg.o.err = response;
 		break;
 	}
 }
@@ -229,39 +229,22 @@ int rq_id(request_t *r)
 	switch (r->msg.type) {
 	case mtOpen:
 	case mtClose:
-		id = r->msg.i.openclose.oid.id;
-		break;
-
 	case mtRead:
 	case mtWrite:
 	case mtTruncate:
-		id = r->msg.i.io.oid.id;
-		break;
-
 	case mtCreate:
-		id = r->msg.i.create.dir.id;
-		break;
-
 	case mtDestroy:
-		id = r->msg.i.destroy.oid.id;
-		break;
-
 	case mtSetAttr:
 	case mtGetAttr:
-		id = r->msg.i.attr.oid.id;
-		break;
-
+	case mtGetAttrAll:
+	case mtReaddir:
 	case mtLookup:
-		id = r->msg.i.lookup.dir.id;
+		id = r->msg.oid.id;
 		break;
 
 	case mtLink:
 	case mtUnlink:
 		id = r->msg.i.ln.oid.id;
-		break;
-
-	case mtReaddir:
-		id = r->msg.i.readdir.dir.id;
 		break;
 
 	case mtDevCtl:
@@ -305,7 +288,7 @@ void posixsrv_threadMain(void *arg)
 			if (o != NULL) {
 				posixsrv_object_put(o);
 			}
-			r->msg.o.io.err = -EINVAL;
+			r->msg.o.err = -EINVAL;
 			msgRespond(port, &r->msg, r->rid);
 			continue;
 		}
