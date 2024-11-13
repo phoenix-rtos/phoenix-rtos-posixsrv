@@ -49,6 +49,21 @@ static request_t *special_unlink(object_t *o, request_t *r)
 }
 
 
+static request_t *special_devctl(object_t *o, request_t *r)
+{
+	unsigned long request;
+	int err = -EINVAL;
+
+	ioctl_unpack(&r->msg, &request, NULL);
+	if (request == TCGETS) {
+		err = -ENOTTY; /* handle isatty() correctly */
+	}
+	rq_setResponse(r, err);
+
+	return r;
+}
+
+
 static request_t *nothing_op(object_t *o, request_t *r)
 {
 	return r;
@@ -136,7 +151,8 @@ static const operations_t null_ops = {
 	.truncate = nothing_op,
 	.link = special_link,
 	.unlink = special_unlink,
-	.release = special_release
+	.release = special_release,
+	.devctl = special_devctl
 };
 
 
@@ -149,7 +165,8 @@ static const operations_t zero_ops = {
 	.getattr = zero_getattr_op,
 	.link = special_link,
 	.unlink = special_unlink,
-	.release = special_release
+	.release = special_release,
+	.devctl = special_devctl
 };
 
 
@@ -163,6 +180,7 @@ static const operations_t full_ops = {
 	.link = special_link,
 	.unlink = special_unlink,
 	.release = special_release,
+	.devctl = special_devctl
 };
 
 
@@ -175,7 +193,8 @@ static const operations_t random_ops = {
 	.getattr = zero_getattr_op,
 	.link = special_link,
 	.unlink = special_unlink,
-	.release = special_release
+	.release = special_release,
+	.devctl = special_devctl
 };
 
 
