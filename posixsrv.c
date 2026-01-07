@@ -382,6 +382,11 @@ int posixsrv_init(unsigned *srvPort, unsigned *eventPort)
 		return -1;
 	}
 
+	if (semaphore_init() < 0) {
+		fail("semaphore init");
+		return -1;
+	}
+
 	if (srvPort != NULL) {
 		*srvPort = posixsrv_common.port;
 	}

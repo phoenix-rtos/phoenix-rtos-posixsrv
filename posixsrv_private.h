@@ -151,4 +151,7 @@ extern int event_init(unsigned *port);
 extern int tmpfile_init(void);
 
 
+extern int semaphore_init(void);
+
+
 #endif
