@@ -71,13 +71,11 @@ typedef struct _pipe_t {
 
 
 static operations_t pipe_server_ops = {
-	.handlers = { NULL },
 	.create = pipe_create_op,
 };
 
 
 static operations_t pipe_ops = {
-	.handlers = { NULL },
 	.open = pipe_open_op,
 	.close = pipe_close_op,
 	.read = pipe_read_op,
@@ -611,7 +609,7 @@ static request_t *pipe_getattr_op(object_t *o, request_t *r)
 }
 
 
-int pipe_init()
+int pipe_init(void)
 {
 	object_t *o;
 	int err;

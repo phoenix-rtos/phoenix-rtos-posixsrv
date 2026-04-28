@@ -56,7 +56,6 @@ static void pts_destroy(object_t *o);
 static void pts_timeout(request_t *r);
 
 static operations_t pts_ops = {
-	.handlers = { NULL },
 	.open = pts_open_op,
 	.close = pts_close_op,
 	.read = pts_read_op,
@@ -64,20 +63,17 @@ static operations_t pts_ops = {
 	.getattr = pts_getattr_op,
 	.setattr = pts_setattr_op,
 	.devctl = pts_devctl_op,
-	.release = NULL,
 	.timeout = pts_timeout,
 	.release = pts_destroy,
 };
 
 
 static operations_t ptmx_ops = {
-	.handlers = { NULL },
 	.open = ptmx_open_op,
 };
 
 
 static operations_t ptm_ops = {
-	.handlers = { NULL },
 	.close = ptm_close_op,
 	.read = ptm_read_op,
 	.write = ptm_write_op,
@@ -674,7 +670,7 @@ static request_t *ptmx_open_op(object_t *ptmx, request_t *r)
 }
 
 
-int pty_init()
+int pty_init(void)
 {
 	object_t *o;
 	int err;

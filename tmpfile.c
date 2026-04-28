@@ -38,13 +38,11 @@ static void tmpfile_release_op(object_t *o);
 
 
 static operations_t tmpfile_server_ops = {
-	.handlers = { NULL },
 	.open = tmpfile_open_op,
 };
 
 
 static operations_t tmpfile_ops = {
-	.handlers = { NULL },
 	.close = tmpfile_close_op,
 	.read = tmpfile_fw_op,
 	.write = tmpfile_fw_op,
@@ -167,7 +165,7 @@ static request_t *tmpfile_open_op(object_t *o, request_t *r)
 }
 
 
-int tmpfile_init()
+int tmpfile_init(void)
 {
 	object_t *o;
 	int err;

@@ -142,7 +142,6 @@ static void special_release(object_t *o)
 
 
 static const operations_t null_ops = {
-	.handlers = { NULL },
 	.open = nothing_op,
 	.close = nothing_op,
 	.read = null_read_op,
@@ -157,7 +156,6 @@ static const operations_t null_ops = {
 
 
 static const operations_t zero_ops = {
-	.handlers = { NULL },
 	.open = nothing_op,
 	.close = nothing_op,
 	.read = zero_read_op,
@@ -171,7 +169,6 @@ static const operations_t zero_ops = {
 
 
 static const operations_t full_ops = {
-	.handlers = { NULL },
 	.open = nothing_op,
 	.close = nothing_op,
 	.read = zero_read_op,
@@ -185,7 +182,6 @@ static const operations_t full_ops = {
 
 
 static const operations_t random_ops = {
-	.handlers = { NULL },
 	.open = nothing_op,
 	.close = nothing_op,
 	.read = random_read_op,
@@ -226,7 +222,7 @@ static int special_createFile(const char *path, const operations_t *ops)
 }
 
 
-int special_init()
+int special_init(void)
 {
 	int err;
 
