@@ -499,7 +499,7 @@ static evqueue_t *queue_create(void)
 		return NULL;
 	}
 
-	posixsrv_object_create(&queue->object, &queue_ops);
+	posixsrv_object_create(&queue->object, &queue_ops, S_IFREG);
 	posixsrv_object_put(&queue->object);
 	return queue;
 }
@@ -893,8 +893,8 @@ int event_init(unsigned *port)
 	portCreate(&event_common.port);
 
 	lib_rbInit(&event_common.notes, event_cmp, NULL);
-	posixsrv_object_create(&event_common.sink, &sink_ops);
-	posixsrv_object_create(&event_common.qmx, &qmx_ops);
+	posixsrv_object_create(&event_common.sink, &sink_ops, S_IFREG);
+	posixsrv_object_create(&event_common.qmx, &qmx_ops, S_IFREG);
 
 	mkdir("/dev/event", 0555);
 

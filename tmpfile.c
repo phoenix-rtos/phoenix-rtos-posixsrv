@@ -134,7 +134,7 @@ static int tmpfile_open(int *id)
 		return -ENOMEM;
 	}
 
-	posixsrv_object_create(&tmpfile->o, &tmpfile_ops);
+	posixsrv_object_create(&tmpfile->o, &tmpfile_ops, S_IFCHR);
 	*id = posixsrv_object_id(&tmpfile->o);
 	asprintf(&path, "%s%d", TMPFILE_PATH, *id);
 
@@ -177,7 +177,7 @@ int tmpfile_init()
 	if ((o = malloc(sizeof(*o))) == NULL)
 		return -ENOMEM;
 
-	posixsrv_object_create(o, &tmpfile_server_ops);
+	posixsrv_object_create(o, &tmpfile_server_ops, S_IFCHR);
 	err = posixsrv_object_link(o, "/dev/posix/tmpfile");
 	posixsrv_object_put(o);
 	return err;

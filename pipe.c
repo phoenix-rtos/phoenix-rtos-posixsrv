@@ -131,7 +131,7 @@ int pipe_create(int type, int *id, unsigned open)
 
 	p->full = 0;
 
-	posixsrv_object_create(&p->object, &pipe_ops);
+	posixsrv_object_create(&p->object, &pipe_ops, S_IFIFO);
 
 	p->rrefs = !!(open & O_RDONLY);
 	p->wrefs = !!(open & O_WRONLY);
@@ -619,7 +619,7 @@ int pipe_init()
 	if ((o = malloc(sizeof(*o))) == NULL)
 		return -ENOMEM;
 
-	posixsrv_object_create(o, &pipe_server_ops);
+	posixsrv_object_create(o, &pipe_server_ops, S_IFIFO);
 	err = posixsrv_object_link(o, "/dev/posix/pipes");
 	posixsrv_object_put(o);
 	return err;

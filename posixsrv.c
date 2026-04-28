@@ -128,11 +128,12 @@ void posixsrv_object_put(object_t *o)
 }
 
 
-int posixsrv_object_create(object_t *o, const operations_t *ops)
+int posixsrv_object_create(object_t *o, const operations_t *ops, mode_t mode)
 {
 	o->destroy = 0;
 	o->operations = ops;
 	o->refs = 1;
+	o->mode = 0666 | mode;
 
 	while (mutexLock(posixsrv_common.lock) < 0);
 	idtree_alloc(&posixsrv_common.objects, &o->linkage);
@@ -284,17 +285,31 @@ void posixsrv_threadMain(void *arg)
 		o = posixsrv_object_get(rq_id(r));
 
 		/* Can't handle msg - wrong object id or wrong operation */
-		if (o == NULL || o->operations->handlers[r->msg.type] == NULL) {
-			if (o != NULL) {
-				posixsrv_object_put(o);
-			}
+		if (o == NULL) {
 			r->msg.o.err = -EINVAL;
 			msgRespond(port, &r->msg, r->rid);
 			continue;
 		}
 
-		r->object = o;
-		r = o->operations->handlers[r->msg.type](o, r);
+		if (r->msg.type == mtGetAttr && r->msg.i.attr.type == atMode) {
+			/*
+			 * FIXME: for now, report the file mode of a posix object
+			 * to let kernel differentiate between device types.
+			 * This should be handled at the FS layer.
+			 */
+			r->msg.o.attr.val = o->mode;
+			r->msg.o.err = EOK;
+		}
+		else {
+			if (r->msg.type < 0 || r->msg.type >= (sizeof(o->operations->handlers) / sizeof(o->operations->handlers[0])) ||
+					o->operations->handlers[r->msg.type] == NULL) {
+				r->msg.o.err = -EOPNOTSUPP;
+			}
+			else {
+				r->object = o;
+				r = o->operations->handlers[r->msg.type](o, r);
+			}
+		}
 
 		/* If an operation returns NULL, it is up to a module to
 		 * respond to this msg later and free the request */

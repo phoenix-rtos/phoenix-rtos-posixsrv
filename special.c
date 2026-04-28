@@ -208,7 +208,7 @@ static int special_createFile(const char *path, const operations_t *ops)
 		return -ENOMEM;
 	}
 
-	err = posixsrv_object_create(o, ops);
+	err = posixsrv_object_create(o, ops, S_IFCHR);
 	if (err < 0) {
 		free(o);
 		return err;

@@ -16,6 +16,7 @@
 
 #include <sys/ioctl.h>
 #include <termios.h>
+#include <phoenix/posix-stat.h>
 #include <posix/utils.h>
 #include <posix/idtree.h>
 #include <libtty.h>
@@ -73,6 +74,7 @@ typedef struct _object_t {
 	idnode_t linkage;
 	const operations_t *operations;
 	int refs, destroy;
+	mode_t mode;
 } object_t;
 
 
@@ -124,7 +126,7 @@ extern void posixsrv_object_ref(object_t *o);
 extern void posixsrv_object_put(object_t *o);
 
 
-extern int posixsrv_object_create(object_t *o, const operations_t *ops);
+extern int posixsrv_object_create(object_t *o, const operations_t *ops, mode_t mode);
 
 
 extern int pipe_create(int type, int *id, unsigned open);

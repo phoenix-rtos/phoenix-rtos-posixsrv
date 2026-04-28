@@ -639,8 +639,8 @@ static int ptm_create(int *id)
 	pty->state = MASTER_OPEN | SLAVE_LOCKED;
 	pty->slave_refs = 0;
 
-	posixsrv_object_create(&pty->master, &ptm_ops);
-	posixsrv_object_create(&pty->slave, &pts_ops);
+	posixsrv_object_create(&pty->master, &ptm_ops, S_IFCHR);
+	posixsrv_object_create(&pty->slave, &pts_ops, S_IFCHR);
 
 	*id = posixsrv_object_id(&pty->master);
 	oid.port = posixsrv_port();
@@ -684,7 +684,7 @@ int pty_init()
 	if ((o = malloc(sizeof(*o))) == NULL)
 		return -ENOMEM;
 
-	posixsrv_object_create(o, &ptmx_ops);
+	posixsrv_object_create(o, &ptmx_ops, S_IFCHR);
 	err = posixsrv_object_link(o, "/dev/ptmx");
 	posixsrv_object_put(o);
 	return err;
