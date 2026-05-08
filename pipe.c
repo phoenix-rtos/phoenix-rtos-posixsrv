@@ -41,7 +41,7 @@
 
 
 static handler_t pipe_create_op, pipe_write_op, pipe_read_op, pipe_open_op, pipe_close_op, pipe_link_op, pipe_unlink_op;
-static handler_t pipe_setattr_op, pipe_getattr_op;
+static handler_t pipe_setattr_op, pipe_getattr_op, pipe_destroy_op;
 
 
 static int pipe_lock(handle_t lock, int nonblock)
@@ -86,6 +86,7 @@ static operations_t pipe_ops = {
 	.unlink = pipe_unlink_op,
 	.getattr = pipe_getattr_op,
 	.setattr = pipe_setattr_op,
+	.destroy = pipe_destroy_op,
 	.release = pipe_destroy,
 };
 
@@ -179,6 +180,15 @@ static void pipe_destroy(object_t *o)
 
 	resourceDestroy(p->lock);
 	free(o);
+}
+
+
+static request_t *pipe_destroy_op(object_t *o, request_t *r)
+{
+	/* FIXME: anyone can send this message */
+	r->msg.o.err = EOK;
+	posixsrv_object_destroy(o);
+	return r;
 }
 
 
