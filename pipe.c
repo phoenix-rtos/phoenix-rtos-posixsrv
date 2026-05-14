@@ -498,10 +498,20 @@ int pipe_close(pipe_t *p, unsigned flags, request_t *r)
 		}
 	}
 
-	if (!p->wrefs && !p->rrefs && !p->link) {
-		posixsrv_object_destroy(&p->object);
-		mutexUnlock(p->lock);
-		return EOK;
+	if (!p->wrefs && !p->rrefs) {
+		if (!p->link) {
+			posixsrv_object_destroy(&p->object);
+			mutexUnlock(p->lock);
+			return EOK;
+		}
+
+		if (p->w < p->r) {
+			p->w = p->r;
+		}
+		else {
+			p->r = p->w;
+		}
+		p->full = 0;
 	}
 
 	mutexUnlock(p->lock);
