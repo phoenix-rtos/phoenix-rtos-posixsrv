@@ -63,21 +63,6 @@ typedef struct _tmpfile_t {
 } tmpfile_t;
 
 
-void tmpfile_set_msg_oid(msg_t *msg, oid_t *oid)
-{
-	switch (msg->type) {
-		case mtGetAttr:
-		case mtRead:
-		case mtWrite:
-			*oid = msg->oid;
-			break;
-		default:
-			TMP_TRACE("can't set oid for msg type %d", msg->type);
-			break;
-	}
-}
-
-
 static request_t *tmpfile_fw_op(object_t *o, request_t *r)
 {
 	TMP_TRACE("forward operation type %d", r->msg.type);
@@ -85,7 +70,7 @@ static request_t *tmpfile_fw_op(object_t *o, request_t *r)
 	tmpfile_t *tmpfile = (tmpfile_t *)o;
 
 	mutexLock(tmpfile->lock);
-	tmpfile_set_msg_oid(&r->msg, &tmpfile->oid);
+	r->msg.oid = tmpfile->oid;
 	err	= msgSend(tmpfile->oid.port, &r->msg);
 	mutexUnlock(tmpfile->lock);
 
