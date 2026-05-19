@@ -157,7 +157,15 @@ int tmpfile_init()
 	object_t *o;
 	int err;
 
-	mkdir("/var/tmp", 0777);
+	if (mkdir("/var", 0777) < 0 && errno != EEXIST) {
+		TMP_TRACE("posixsrv tmpfile: failed to create /var directory\n");
+		return -errno;
+	}
+
+	if (mkdir("/var/tmp", 0777) < 0 && errno != EEXIST) {
+		TMP_TRACE("posixsrv tmpfile: failed to create /var/tmp directory\n");
+		return -errno;
+	}
 
 	if ((o = malloc(sizeof(*o))) == NULL)
 		return -ENOMEM;
