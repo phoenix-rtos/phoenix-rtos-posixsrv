@@ -50,6 +50,11 @@ struct {
 	rbtree_t timeout;
 
 	struct {
+		request_t *list;
+		handle_t lock;
+	} done;
+
+	struct {
 		int id;
 		object_t *o;
 	} cache;
@@ -213,11 +218,15 @@ void rq_setResponse(request_t *r, int response)
 }
 
 
+/* IPC: push to done queue and pulse the port so the receiver thread responds */
 void rq_wakeup(request_t *r)
 {
-	TRACE("respond %x", r->rid);
-	msgRespond(r->port, &r->msg, r->rid);
-	free(r);
+	TRACE("wakeup %x", r->rid);
+	while (mutexLock(posixsrv_common.done.lock) < 0)
+		;
+	LIST_ADD(&posixsrv_common.done.list, r);
+	mutexUnlock(posixsrv_common.done.lock);
+	msgPulse(r->port, RESPOND_PENDING);
 }
 
 
@@ -266,8 +275,34 @@ void posixsrv_threadMain(void *arg)
 	object_t *o;
 	unsigned port = (uintptr_t)arg;
 	request_t *r = NULL;
+	request_t *done;
+	int err;
 
 	for (;;) {
+		/* Process done queue - respond to completed deferred requests */
+		while (mutexLock(posixsrv_common.done.lock) < 0)
+			;
+		done = posixsrv_common.done.list;
+		posixsrv_common.done.list = NULL;
+		mutexUnlock(posixsrv_common.done.lock);
+
+		while (done != NULL) {
+			request_t *d = done;
+			LIST_REMOVE(&done, d);
+			if (d->port == port) {
+				msgRespond(port, &d->msg, d->rid);
+				free(d);
+			}
+			else {
+				/* Not our port, put back and re-pulse */
+				while (mutexLock(posixsrv_common.done.lock) < 0)
+					;
+				LIST_ADD(&posixsrv_common.done.list, d);
+				mutexUnlock(posixsrv_common.done.lock);
+				msgPulse(d->port, RESPOND_PENDING);
+			}
+		}
+
 		if (r == NULL) {
 			r = malloc(sizeof(*r));
 			if (r == NULL) {
@@ -277,7 +312,11 @@ void posixsrv_threadMain(void *arg)
 			r->port = port;
 		}
 
-		if (msgRecv(port, &r->msg, &r->rid) < 0) {
+		err = msgRecv(port, &r->msg, &r->rid);
+		if (err == -EPULSE) {
+			continue;
+		}
+		if (err < 0) {
 			continue;
 		}
 
@@ -348,6 +387,8 @@ int posixsrv_init(unsigned *srvPort, unsigned *eventPort)
 	lib_rbInit(&posixsrv_common.timeout, rq_cmp, NULL);
 	mutexCreate(&posixsrv_common.lock);
 	condCreate(&posixsrv_common.cond);
+	mutexCreate(&posixsrv_common.done.lock);
+	posixsrv_common.done.list = NULL;
 
 	if (portCreate(&posixsrv_common.port) < 0) {
 		fail("port create");

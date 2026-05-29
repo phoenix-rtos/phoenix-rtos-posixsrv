@@ -23,6 +23,8 @@
 
 #define PIPE_BUFSZ 0x1000
 
+#define RESPOND_PENDING 42
+
 #define log_sev(sev, fmt, ...) syslog(sev, __FILE__ ":%d %s: " fmt, __LINE__, __func__, ##__VA_ARGS__)
 #define log_debug(fmt, ...) log_sev(LOG_DEBUG, fmt, ##__VA_ARGS__)
 #define log_info(fmt, ...)  log_sev(LOG_INFO, fmt, ##__VA_ARGS__)

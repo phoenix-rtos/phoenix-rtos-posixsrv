@@ -848,14 +848,13 @@ static request_t *sink_write_op(object_t *o, request_t *r)
 	eventcnt = r->msg.i.size / sizeof(event_t);
 	memcpy(events, r->msg.i.data, r->msg.i.size);
 	rq_setResponse(r, EOK);
-	rq_wakeup(r);
 
 	event_register(events, eventcnt);
 
 	if (eventcnt > sizeof(stackbuf) / sizeof(event_t))
 		free(events);
 
-	return NULL;
+	return r;
 }
 
 

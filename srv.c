@@ -25,7 +25,7 @@
 #include "posixsrv.h"
 
 
-static char stacks[4][0x1000] __attribute__((aligned(8)));
+static char stacks[2][0x1000] __attribute__((aligned(8)));
 
 
 static int fail(const char *str)
@@ -52,10 +52,7 @@ int main(int argc, char **argv)
 	openlog("posixsrv", LOG_CONS, LOG_DAEMON);
 
 	beginthread(posixsrv_threadMain, 4, stacks[0], sizeof(stacks[0]), (void *)(uintptr_t)eventPort);
-
-	for (int i = 1; i < sizeof(stacks) / sizeof(stacks[0]); ++i) {
-		beginthread(posixsrv_threadMain, 4, stacks[i], sizeof(stacks[i]), (void *)(uintptr_t)srvPort);
-	}
+	beginthread(posixsrv_threadMain, 4, stacks[1], sizeof(stacks[1]), (void *)(uintptr_t)srvPort);
 
 	posixsrv_threadRqTimeout(NULL);
 
