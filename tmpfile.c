@@ -31,7 +31,8 @@
 #define TMP_TRACE(str, ...)
 #endif
 
-#define TMPFILE_PATH "/var/tmp/tmpfile_"
+#define TMPFILE_PATH     "/var/tmp/tmpfile_"
+#define TMPFILE_PATH_MAX TMPFILE_PATH "2147483647"
 
 static handler_t tmpfile_open_op, tmpfile_close_op, tmpfile_fw_op;
 static void tmpfile_release_op(object_t *o);
@@ -49,6 +50,7 @@ static operations_t tmpfile_ops = {
 	.read = tmpfile_fw_op,
 	.write = tmpfile_fw_op,
 	.getattr = tmpfile_fw_op,
+	/* TODO: implement missing ops */
 	.release = tmpfile_release_op,
 };
 
@@ -58,8 +60,8 @@ typedef struct _tmpfile_t {
 	handle_t lock;
 
 	int fd;
+	int id;
 	oid_t oid;
-	char *path;
 } tmpfile_t;
 
 
@@ -74,8 +76,9 @@ static request_t *tmpfile_fw_op(object_t *o, request_t *r)
 	err	= msgSend(tmpfile->oid.port, &r->msg);
 	mutexUnlock(tmpfile->lock);
 
-	if (err)
+	if (err != 0) {
 		rq_setResponse(r, err);
+	}
 
 	return r;
 }
@@ -90,29 +93,52 @@ static request_t *tmpfile_close_op(object_t *o, request_t *r)
 }
 
 
+static inline int tmpfile_sprintPath(char *pathbuf, int id)
+{
+	if (id == -1) {
+		return -ENOENT;
+	}
+
+	if (sprintf(pathbuf, TMPFILE_PATH "%d", id) < 0) {
+		return -errno;
+	}
+
+	return 0;
+}
+
+
 static void tmpfile_release_op(object_t *o)
 {
 	TMP_TRACE("release operation");
 	tmpfile_t *tmpfile = (tmpfile_t *)o;
+	char path[sizeof(TMPFILE_PATH_MAX)];
 
-	close(tmpfile->fd);
-	unlink(tmpfile->path);
-	resourceDestroy(tmpfile->lock);
-	free(tmpfile->path);
+	if (tmpfile->fd != -1) {
+		close(tmpfile->fd);
+		if (tmpfile_sprintPath(path, tmpfile->id) >= 0) {
+			unlink(path);
+		}
+	}
+	if (tmpfile->lock != -1) {
+		resourceDestroy(tmpfile->lock);
+	}
 	free(tmpfile);
 }
 
 
-static int tmpfile_open(int *id)
+static int tmpfile_open(void)
 {
-
+	int err;
 	tmpfile_t *tmpfile;
-	char *path;
+	char path[sizeof(TMPFILE_PATH_MAX)];
 
 	tmpfile = malloc(sizeof(tmpfile_t));
-
-	if (tmpfile == NULL)
+	if (tmpfile == NULL) {
 		return -ENOMEM;
+	}
+	tmpfile->fd = -1;
+	tmpfile->lock = -1;
+	tmpfile->id = -1;
 
 	if (mutexCreate(&tmpfile->lock) < 0) {
 		free(tmpfile);
@@ -120,33 +146,36 @@ static int tmpfile_open(int *id)
 	}
 
 	posixsrv_object_create(&tmpfile->o, &tmpfile_ops);
-	*id = posixsrv_object_id(&tmpfile->o);
-	asprintf(&path, "%s%d", TMPFILE_PATH, *id);
+	tmpfile->id = posixsrv_object_id(&tmpfile->o);
+	err = tmpfile_sprintPath(path, tmpfile->id);
+	if (err < 0) {
+		tmpfile_close_op(&tmpfile->o, NULL);
+		return err;
+	}
 
 	tmpfile->fd = open(path, O_RDWR | O_CREAT | O_TRUNC, DEFFILEMODE);
 	if (tmpfile->fd < 0) {
+		err = -errno;
 		tmpfile_close_op(&tmpfile->o, NULL);
-		return -1;
+		return err;
 	}
 
-	if (lookup(path, NULL, &tmpfile->oid) < 0) {
+	err = lookup(path, NULL, &tmpfile->oid);
+	if (err < 0) {
 		tmpfile_close_op(&tmpfile->o, NULL);
-		return -1;
+		return err;
 	}
 
-	tmpfile->path = path;
-	return 0;
+	return tmpfile->id;
 }
 
 
 static request_t *tmpfile_open_op(object_t *o, request_t *r)
 {
 	TMP_TRACE("open");
-	int id, err;
+	int err;
 
-	err = tmpfile_open(&id);
-
-	if (!err) err = id;
+	err = tmpfile_open();
 	rq_setResponse(r, err);
 	return r;
 }
