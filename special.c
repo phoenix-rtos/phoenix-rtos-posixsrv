@@ -226,7 +226,7 @@ static int special_createFile(const char *path, const operations_t *ops)
 }
 
 
-int special_init()
+int special_init(void)
 {
 	int err;
 

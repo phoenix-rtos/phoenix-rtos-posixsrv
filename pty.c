@@ -674,7 +674,7 @@ static request_t *ptmx_open_op(object_t *ptmx, request_t *r)
 }
 
 
-int pty_init()
+int pty_init(void)
 {
 	object_t *o;
 	int err;

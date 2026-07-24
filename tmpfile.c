@@ -181,7 +181,7 @@ static request_t *tmpfile_open_op(object_t *o, request_t *r)
 }
 
 
-int tmpfile_init()
+int tmpfile_init(void)
 {
 	object_t *o;
 	int err;
