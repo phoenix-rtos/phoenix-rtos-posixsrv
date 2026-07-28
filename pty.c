@@ -250,7 +250,7 @@ static request_t *_pts_read(pty_t *pty, request_t *r)
 		LIST_ADD(&pty->read_requests, r);
 
 		if (r->pts_read.timeout_ms)
-			rq_timeout(r, r->pts_read.timeout_ms);
+			rq_timeout(r, r->pts_read.timeout_ms * 1000);
 
 		r = NULL;
 	}

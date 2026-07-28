@@ -42,7 +42,7 @@ typedef struct {
 } shared_semaphore_t;
 
 
-static int semaphore_down(shared_semaphore_t *sem, request_t *request, time_t timeoutms, bool try)
+static int semaphore_down(shared_semaphore_t *sem, request_t *request, time_t timeoutUs, bool try)
 {
 	int ret;
 
@@ -58,13 +58,12 @@ static int semaphore_down(shared_semaphore_t *sem, request_t *request, time_t ti
 	else {
 		LIST_ADD(&sem->queue, request);
 		ret = -EBUSY;
+		if (timeoutUs > 0) {
+			rq_timeout(request, timeoutUs);
+		}
 	}
 
 	mutexUnlock(sem->lock);
-
-	if (timeoutms > 0) {
-		rq_timeout(request, timeoutms / 1000);
-	}
 
 	return ret;
 }
