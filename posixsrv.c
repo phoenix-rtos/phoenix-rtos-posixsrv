@@ -213,9 +213,20 @@ void rq_setResponse(request_t *r, int response)
 }
 
 
+void rq_timeoutDequeue(request_t *r)
+{
+	TRACE("dequeue %x", r->rid);
+	mutexLock(posixsrv_common.lock);
+	if (lib_rbFind(&posixsrv_common.timeout, &r->linkage) != NULL) {
+		lib_rbRemove(&posixsrv_common.timeout, &r->linkage);
+	}
+	mutexUnlock(posixsrv_common.lock);
+}
+
+
 void rq_wakeup(request_t *r)
 {
-	TRACE("respond %x", r->rid);
+	TRACE("wakeup %x", r->rid);
 	msgRespond(r->port, &r->msg, r->rid);
 	free(r);
 }
@@ -321,6 +332,7 @@ void posixsrv_threadRqTimeout(void *arg)
 
 			if (r->wakeup <= now) {
 				lib_rbRemove(&posixsrv_common.timeout, &r->linkage);
+				TRACE("dequeue %x", r->rid);
 				if (r->object->operations->timeout != NULL) {
 					r->object->operations->timeout(r);
 				}

@@ -684,6 +684,7 @@ static request_t *queue_close_op(object_t *o, request_t *r)
 	while ((p = queue->requests) != NULL) {
 		LIST_REMOVE(&queue->requests, p);
 		rq_setResponse(p, -EBADF);
+		rq_timeoutDequeue(r);
 		rq_wakeup(p);
 	}
 
@@ -848,6 +849,7 @@ static request_t *sink_write_op(object_t *o, request_t *r)
 	eventcnt = r->msg.i.size / sizeof(event_t);
 	memcpy(events, r->msg.i.data, r->msg.i.size);
 	rq_setResponse(r, EOK);
+	rq_timeoutDequeue(r);
 	rq_wakeup(r);
 
 	event_register(events, eventcnt);

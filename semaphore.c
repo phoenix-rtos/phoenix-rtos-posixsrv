@@ -82,6 +82,7 @@ static int semaphore_up(shared_semaphore_t *sem, request_t *request)
 		last = sem->queue;
 		LIST_REMOVE(&sem->queue, last);
 		rq_setResponse(last, EOK);
+		rq_timeoutDequeue(last);
 		rq_wakeup(last);
 	}
 	else {
@@ -163,6 +164,7 @@ static void semaphore_release(object_t *object)
 		cur = sem->queue;
 		LIST_REMOVE(&sem->queue, cur);
 		rq_setResponse(cur, -EINVAL);
+		rq_timeoutDequeue(cur);
 		rq_wakeup(cur);
 	}
 

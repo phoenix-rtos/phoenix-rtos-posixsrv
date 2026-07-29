@@ -94,6 +94,9 @@ extern void rq_wakeup(request_t *r);
 extern void rq_setResponse(request_t *r, int retval);
 
 
+extern void rq_timeoutDequeue(request_t *r);
+
+
 extern void rq_timeout(request_t *r, time_t usecs);
 
 
