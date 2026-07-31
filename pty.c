@@ -111,16 +111,19 @@ static void pty_cancelRequests(pty_t *pty)
 
 	while ((r = pty->write_requests) != NULL) {
 		LIST_REMOVE(&pty->write_requests, r);
+		rq_timeoutDequeue(r);
 		rq_wakeup(r);
 	}
 
 	while ((r = pty->read_requests) != NULL) {
 		LIST_REMOVE(&pty->read_requests, r);
+		rq_timeoutDequeue(r);
 		rq_wakeup(r);
 	}
 
 	while ((r = pty->read_master) != NULL) {
 		LIST_REMOVE(&pty->read_master, r);
+		rq_timeoutDequeue(r);
 		rq_wakeup(r);
 	}
 }
@@ -250,7 +253,7 @@ static request_t *_pts_read(pty_t *pty, request_t *r)
 		LIST_ADD(&pty->read_requests, r);
 
 		if (r->pts_read.timeout_ms)
-			rq_timeout(r, r->pts_read.timeout_ms);
+			rq_timeout(r, r->pts_read.timeout_ms * 1000);
 
 		r = NULL;
 	}
@@ -356,8 +359,10 @@ static request_t *ptm_write_op(object_t *o, request_t *r)
 	if (wake_reader && ((reader = pty->read_requests) != NULL)) {
 		LIST_REMOVE(&pty->read_requests, reader);
 
-		if ((reader = _pts_read(pty, reader)) != NULL)
+		if ((reader = _pts_read(pty, reader)) != NULL) {
+			rq_timeoutDequeue(reader);
 			rq_wakeup(reader);
+		}
 
 		wake_reader = libtty_poll_status(&pty->tty) & POLLIN;
 	}
@@ -408,8 +413,10 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 	if (wake_writer && (writer = pty->write_requests) != NULL) {
 		LIST_REMOVE(&pty->write_requests, writer);
 
-		if ((writer = _pts_write(pty, writer)) != NULL)
+		if ((writer = _pts_write(pty, writer)) != NULL) {
+			rq_timeoutDequeue(writer);
 			rq_wakeup(writer);
+		}
 
 		wake_writer = libtty_poll_status(&pty->tty) & POLLOUT;
 	}
@@ -596,8 +603,10 @@ void ptm_signalReady(void *arg)
 
 	if ((r = pty->read_master) != NULL) {
 		LIST_REMOVE(&pty->read_master, r);
-		if ((r = _ptm_read(pty, r)) != NULL)
+		if ((r = _ptm_read(pty, r)) != NULL) {
+			rq_timeoutDequeue(r);
 			rq_wakeup(r);
+		}
 	}
 }
 
@@ -674,7 +683,7 @@ static request_t *ptmx_open_op(object_t *ptmx, request_t *r)
 }
 
 
-int pty_init()
+int pty_init(void)
 {
 	object_t *o;
 	int err;

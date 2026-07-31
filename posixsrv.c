@@ -178,10 +178,10 @@ static int rq_cmp(rbnode_t *n1, rbnode_t *n2)
 }
 
 
-void rq_timeout(request_t *r, int ms)
+void rq_timeout(request_t *r, time_t usecs)
 {
 	gettime(&r->wakeup, NULL);
-	r->wakeup += 1000 * ms;
+	r->wakeup += usecs;
 
 	mutexLock(posixsrv_common.lock);
 	lib_rbInsert(&posixsrv_common.timeout, &r->linkage);
@@ -213,9 +213,20 @@ void rq_setResponse(request_t *r, int response)
 }
 
 
+void rq_timeoutDequeue(request_t *r)
+{
+	TRACE("dequeue %x", r->rid);
+	mutexLock(posixsrv_common.lock);
+	if (lib_rbFind(&posixsrv_common.timeout, &r->linkage) != NULL) {
+		lib_rbRemove(&posixsrv_common.timeout, &r->linkage);
+	}
+	mutexUnlock(posixsrv_common.lock);
+}
+
+
 void rq_wakeup(request_t *r)
 {
-	TRACE("respond %x", r->rid);
+	TRACE("wakeup %x", r->rid);
 	msgRespond(r->port, &r->msg, r->rid);
 	free(r);
 }
@@ -321,6 +332,7 @@ void posixsrv_threadRqTimeout(void *arg)
 
 			if (r->wakeup <= now) {
 				lib_rbRemove(&posixsrv_common.timeout, &r->linkage);
+				TRACE("dequeue %x", r->rid);
 				if (r->object->operations->timeout != NULL) {
 					r->object->operations->timeout(r);
 				}
@@ -379,6 +391,11 @@ int posixsrv_init(unsigned *srvPort, unsigned *eventPort)
 
 	if (tmpfile_init() < 0) {
 		fail("tmpfile init");
+		return -1;
+	}
+
+	if (semaphore_init() < 0) {
+		fail("semaphore init");
 		return -1;
 	}
 
