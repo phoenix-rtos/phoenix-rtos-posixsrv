@@ -201,7 +201,7 @@ static request_t *_pts_write(pty_t *pty, request_t *r)
 {
 	int err;
 
-	err = libtty_write(&pty->tty, r->msg.i.data, r->msg.i.size, r->msg.i.io.mode | O_NONBLOCK);
+	err = _libtty_write(&pty->tty, r->msg.i.data, r->msg.i.size, r->msg.i.io.mode | O_NONBLOCK);
 	rq_setResponse(r, err);
 
 	if (err == -EWOULDBLOCK && !(r->msg.i.io.mode & O_NONBLOCK)) {
@@ -243,7 +243,7 @@ static request_t *_pts_read(pty_t *pty, request_t *r)
 {
 	int err;
 
-	err = libtty_read_nonblock(&pty->tty, r->msg.o.data, r->msg.o.size, r->msg.i.io.mode, &r->pts_read);
+	err = _libtty_read_nonblock(&pty->tty, r->msg.o.data, r->msg.o.size, r->msg.i.io.mode, &r->pts_read);
 	rq_setResponse(r, err);
 
 	if (r->pts_read.timeout_ms >= 0) {
@@ -323,16 +323,17 @@ static request_t *pts_close_op(object_t *o, request_t *r)
 
 static request_t *pts_devctl_op(object_t *o, request_t *r)
 {
-	const void *in, *out;
+	const void *in;
+	void *out;
 	long unsigned request;
 	pty_t *pty = pty_slave(o);
 	pid_t pid = ioctl_getSenderPid(&r->msg);
 	int err;
 
 	mutexLock(pty->mutex);
-	in = ioctl_unpack(&r->msg, &request, NULL);
-	err = libtty_ioctl(&pty->tty, pid, request, in, &out);
-	ioctl_setResponse(&r->msg, request, err, out);
+	in = ioctl_unpackEx(&r->msg, &request, NULL, &out);
+	err = _libtty_ioctl(&pty->tty, pid, request, in, out);
+	ioctl_setResponse(&r->msg, request, err, NULL);
 	mutexUnlock(pty->mutex);
 
 	return r;
@@ -344,23 +345,31 @@ static request_t *ptm_write_op(object_t *o, request_t *r)
 	PTY_TRACE("ptm_write(%d, %d)", posixsrv_object_id(o), r->msg.i.size);
 	pty_t *pty = pty_master(o);
 	size_t i;
-	int wake_reader = 0;
+	int wake_reader = 0, wake_reader_helper = 0;
 	request_t *reader;
 	event_t event = {0};
 
-	/* On master write wake pending slave readers up */
-	for (i = 0; i < r->msg.i.size; ++i)
-		libtty_putchar(&pty->tty, ((unsigned char *)r->msg.i.data)[i], &wake_reader);
-
 	mutexLock(pty->mutex);
+
+	/* On master write wake pending slave readers up */
+	for (i = 0; i < r->msg.i.size; ++i) {
+		_libtty_putchar(&pty->tty, ((unsigned char *)r->msg.i.data)[i], &wake_reader_helper);
+		wake_reader |= wake_reader_helper;
+	}
+
+	if (wake_reader != 0) {
+		_libtty_wake_reader(&pty->tty);
+	}
+
 	if (wake_reader && ((reader = pty->read_requests) != NULL)) {
 		LIST_REMOVE(&pty->read_requests, reader);
 
 		if ((reader = _pts_read(pty, reader)) != NULL)
 			rq_wakeup(reader);
 
-		wake_reader = libtty_poll_status(&pty->tty) & POLLIN;
+		wake_reader = _libtty_poll_status(&pty->tty) & POLLIN;
 	}
+
 	mutexUnlock(pty->mutex);
 
 	if (wake_reader && (pty->evmask & (1 << evtDataIn))) {
@@ -378,7 +387,7 @@ static request_t *ptm_write_op(object_t *o, request_t *r)
 
 static request_t *_ptm_read(pty_t *pty, request_t *r)
 {
-	int i, wake_writer;
+	int i, wake_writer = 0, wake_writer_helper = 0;
 	request_t *writer;
 	event_t event = {0};
 
@@ -387,7 +396,7 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 		return r;
 	}
 
-	if (!libtty_txready(&pty->tty)) {
+	if (!_libtty_txready(&pty->tty)) {
 		if (r->msg.i.io.mode & O_NONBLOCK) {
 			rq_setResponse(r, -EWOULDBLOCK);
 			return r;
@@ -396,13 +405,17 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 		LIST_ADD(&pty->read_master, r);
 		return NULL;
 	}
-	mutexUnlock(pty->mutex);
 
-	for (i = 0; i < r->msg.o.size && libtty_txready(&pty->tty); ++i)
-		((unsigned char *)r->msg.o.data)[i] = libtty_getchar(&pty->tty, &wake_writer);
+	for (i = 0; i < r->msg.o.size && _libtty_txready(&pty->tty); ++i) {
+		((unsigned char *)r->msg.o.data)[i] = _libtty_getchar(&pty->tty, &wake_writer_helper);
+		wake_writer |= wake_writer_helper;
+	}
 
-	mutexLock(pty->mutex);
 	rq_setResponse(r, i);
+
+	if (wake_writer != 0) {
+		_libtty_wake_writer(&pty->tty);
+	}
 
 	/* On master read wake pending slave writers up */
 	if (wake_writer && (writer = pty->write_requests) != NULL) {
@@ -411,7 +424,7 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 		if ((writer = _pts_write(pty, writer)) != NULL)
 			rq_wakeup(writer);
 
-		wake_writer = libtty_poll_status(&pty->tty) & POLLOUT;
+		wake_writer = _libtty_poll_status(&pty->tty) & POLLOUT;
 	}
 
 	if (wake_writer && (pty->evmask & (1 << evtDataOut))) {
@@ -457,7 +470,7 @@ static request_t *ptm_close_op(object_t *o, request_t *r)
 		unlink_pts(pty);
 
 		libtty_signal_pgrp(&pty->tty, SIGHUP);
-		libtty_close(&pty->tty);
+		_libtty_close(&pty->tty);
 		posixsrv_object_destroy(&pty->master);
 
 	}
@@ -529,8 +542,10 @@ static request_t *ptm_getattr_op(object_t *o, request_t *r)
 	if (r->msg.i.attr.type == atPollStatus) {
 		ev = r->msg.i.attr.val;
 
-		if (ev & POLLIN && libtty_txready(&pty->tty))
+		mutexLock(pty->mutex);
+		if (ev & POLLIN && _libtty_txready(&pty->tty))
 			rev |= POLLIN;
+		mutexUnlock(pty->mutex);
 
 		if (ev & POLLOUT)
 			rev |= POLLOUT;
@@ -553,9 +568,10 @@ static request_t *ptm_devctl_op(object_t *o, request_t *r)
 	int err = -EINVAL;
 	unsigned long request;
 	unsigned ptyid;
-	const void *in_data, *out_data;
+	const void *in_data;
+	void *out_data;
 
-	in_data = ioctl_unpack(&r->msg, &request, NULL);
+	in_data = ioctl_unpackEx(&r->msg, &request, NULL, &out_data);
 
 	mutexLock(pty->mutex);
 	PTY_TRACE("ptm_devctl request: %lx", request);
@@ -578,7 +594,9 @@ static request_t *ptm_devctl_op(object_t *o, request_t *r)
 		}
 		break;
 	default:
-		err = libtty_ioctl(&pty->tty, r->msg.pid, request, in_data, &out_data);
+		err = _libtty_ioctl(&pty->tty, r->msg.pid, request, in_data, out_data);
+		/* set out_data to NULL so that it isn't memcpy'ied back to itself */
+		out_data = NULL;
 		break;
 	}
 	mutexUnlock(pty->mutex);
@@ -630,7 +648,7 @@ static int ptm_create(int *id)
 	mutexCreate(&pty->mutex);
 	condCreate(&pty->cond);
 
-	if (libtty_init(&pty->tty, &pty->ops, _PAGE_SIZE, TTYDEF_SPEED) < 0) {
+	if (libtty_init(&pty->tty, &pty->ops, _PAGE_SIZE, TTYDEF_SPEED, &pty->mutex) < 0) {
 		log_error("libtty_init");
 		free(pty);
 		return -ENOMEM;
