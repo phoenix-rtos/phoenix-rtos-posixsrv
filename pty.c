@@ -244,7 +244,7 @@ static request_t *_pts_read(pty_t *pty, request_t *r)
 	int err;
 
 	err = libtty_read_nonblock(&pty->tty, r->msg.o.data, r->msg.o.size, r->msg.i.io.mode, &r->pts_read);
-	rq_setResponse(r, err);
+	rq_setResponse(r, err == 0 ? r->pts_read.prevlen : err);
 
 	if (r->pts_read.timeout_ms >= 0) {
 		LIST_ADD(&pty->read_requests, r);
