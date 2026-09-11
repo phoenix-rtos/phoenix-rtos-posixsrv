@@ -50,6 +50,7 @@ static operations_t tmpfile_ops = {
 	.read = tmpfile_fw_op,
 	.write = tmpfile_fw_op,
 	.getattr = tmpfile_fw_op,
+	.getattrall = tmpfile_fw_op,
 	/* TODO: implement missing ops */
 	.release = tmpfile_release_op,
 };
