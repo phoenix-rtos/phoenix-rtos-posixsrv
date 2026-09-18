@@ -631,7 +631,7 @@ static request_t *pipe_getattr_op(object_t *o, request_t *r)
 }
 
 
-int pipe_init()
+int pipe_init(void)
 {
 	object_t *o;
 	int err;
