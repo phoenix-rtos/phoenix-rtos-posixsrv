@@ -415,7 +415,11 @@ int pipe_open(pipe_t *p, unsigned flags, request_t *r, int *block)
 	if (pipe_lock(p->lock, flags & O_NONBLOCK) < 0)
 		return -EWOULDBLOCK;
 
-	if (flags & O_WRONLY) {
+	if (flags & O_RDWR) {
+		mutexUnlock(p->lock);
+		return -EINVAL;
+	}
+	else if (flags & O_WRONLY) {
 		if (!p->rrefs) {
 			if (p->queue != NULL) {
 				/* wakeup pending read open request */
