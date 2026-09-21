@@ -469,10 +469,9 @@ static request_t *ptm_close_op(object_t *o, request_t *r)
 		pty_cancelRequests(pty);
 		unlink_pts(pty);
 
-		libtty_signal_pgrp(&pty->tty, SIGHUP);
+		_libtty_hangup(&pty->tty);
 		_libtty_close(&pty->tty);
 		posixsrv_object_destroy(&pty->master);
-
 	}
 	mutexUnlock(pty->mutex);
 
