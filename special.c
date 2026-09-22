@@ -33,7 +33,7 @@
 #include "posixsrv_private.h"
 
 
-static request_t *special_link(object_t *o, request_t *r)
+static request_t *special_link_op(object_t *o, request_t *r)
 {
 	posixsrv_object_ref(o);
 	rq_setResponse(r, 0);
@@ -41,7 +41,7 @@ static request_t *special_link(object_t *o, request_t *r)
 }
 
 
-static request_t *special_unlink(object_t *o, request_t *r)
+static request_t *special_unlink_op(object_t *o, request_t *r)
 {
 	posixsrv_object_put(o);
 	rq_setResponse(r, 0);
@@ -49,7 +49,7 @@ static request_t *special_unlink(object_t *o, request_t *r)
 }
 
 
-static request_t *special_devctl(object_t *o, request_t *r)
+static request_t *special_devctl_op(object_t *o, request_t *r)
 {
 	unsigned long request;
 	int err = -EINVAL;
@@ -149,10 +149,10 @@ static const operations_t null_ops = {
 	.write = null_write_op,
 	.getattr = null_getattr_op,
 	.truncate = nothing_op,
-	.link = special_link,
-	.unlink = special_unlink,
+	.link = special_link_op,
+	.unlink = special_unlink_op,
 	.release = special_release,
-	.devctl = special_devctl
+	.devctl = special_devctl_op
 };
 
 
@@ -163,10 +163,10 @@ static const operations_t zero_ops = {
 	.read = zero_read_op,
 	.write = null_write_op,
 	.getattr = zero_getattr_op,
-	.link = special_link,
-	.unlink = special_unlink,
+	.link = special_link_op,
+	.unlink = special_unlink_op,
 	.release = special_release,
-	.devctl = special_devctl
+	.devctl = special_devctl_op
 };
 
 
@@ -177,10 +177,10 @@ static const operations_t full_ops = {
 	.read = zero_read_op,
 	.write = full_write_op,
 	.getattr = zero_getattr_op,
-	.link = special_link,
-	.unlink = special_unlink,
+	.link = special_link_op,
+	.unlink = special_unlink_op,
 	.release = special_release,
-	.devctl = special_devctl
+	.devctl = special_devctl_op
 };
 
 
@@ -191,10 +191,10 @@ static const operations_t random_ops = {
 	.read = random_read_op,
 	.write = null_write_op,
 	.getattr = zero_getattr_op,
-	.link = special_link,
-	.unlink = special_unlink,
+	.link = special_link_op,
+	.unlink = special_unlink_op,
 	.release = special_release,
-	.devctl = special_devctl
+	.devctl = special_devctl_op
 };
 
 
