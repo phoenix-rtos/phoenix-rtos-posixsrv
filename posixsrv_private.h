@@ -172,4 +172,7 @@ int event_init(unsigned *port);
 int tmpfile_init(void);
 
 
+int semaphore_init(void);
+
+
 #endif
