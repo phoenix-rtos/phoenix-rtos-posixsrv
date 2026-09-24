@@ -645,8 +645,13 @@ static void queue_wakeup(evqueue_t *queue)
 			r = queue->requests;
 			LIST_REMOVE(&queue->requests, r);
 
-			if (queue_unpack(&r->msg, NULL, NULL, &events, &count, NULL) < 0)
+			if (queue_unpack(&r->msg, NULL, NULL, &events, &count, NULL) < 0) {
+				rq_setResponse(r, -EINVAL);
+				if (rq_timeoutCancel(r) != 0) {
+					LIST_ADD(&filled, r);
+				}
 				continue;
+			}
 
 			if ((count = _event_read(queue, events, count))) {
 				rq_setResponse(r, count);
