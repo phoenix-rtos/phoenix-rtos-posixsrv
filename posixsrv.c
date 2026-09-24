@@ -178,10 +178,10 @@ static int rq_cmp(rbnode_t *n1, rbnode_t *n2)
 }
 
 
-void rq_timeout(request_t *r, int ms)
+void rq_timeout(request_t *r, time_t usecs)
 {
 	gettime(&r->wakeup, NULL);
-	r->wakeup += 1000 * ms;
+	r->wakeup += usecs;
 
 	mutexLock(posixsrv_common.lock);
 	lib_rbInsert(&posixsrv_common.timeout, &r->linkage);
