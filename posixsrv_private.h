@@ -29,6 +29,14 @@
 #define log_warn(fmt, ...)  log_sev(LOG_WARNING, fmt, ##__VA_ARGS__)
 #define log_error(fmt, ...) log_sev(LOG_ERR, fmt, ##__VA_ARGS__)
 
+
+enum {
+	rq_timeoutIdle = 0, /* no timeout armed - the subsystem owns the request */
+	rq_timeoutArmed,    /* linked in the timeout tree, still cancellable */
+	rq_timeoutFired     /* claimed by the timeout thread, which will complete it */
+};
+
+
 typedef struct request_t {
 	struct request_t *next, *prev;
 	rbnode_t linkage;
@@ -36,6 +44,7 @@ typedef struct request_t {
 
 	struct _object_t *object;
 	time_t wakeup;
+	int timeoutState;
 	msg_rid_t rid;
 	msg_t msg;
 
@@ -95,6 +104,9 @@ void rq_setResponse(request_t *r, int retval);
 
 
 void rq_timeout(request_t *r, time_t usecs);
+
+
+int rq_timeoutCancel(request_t *r);
 
 
 int rq_id(request_t *r);

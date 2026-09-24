@@ -45,9 +45,36 @@ struct {
 	unsigned port;
 
 	handle_t lock;
-	handle_t cond;
 	idtree_t objects;
-	rbtree_t timeout;
+
+	/*
+	 * Deferred requests waiting for their deadline.
+	 *
+	 * LOCK ORDER:
+	 *   1. subsystem lock (sem->lock, queue->lock, pty->mutex)
+	 *   2. posixsrv_common.timeout.lock
+	 *   3. posixsrv_common.lock
+	 *
+	 * Subsystems hold their own lock across rq_timeout() and rq_timeoutCancel(),
+	 * so posixsrv_threadRqTimeout() must not hold timeout.lock* while it dispatches
+	 * timeout handler.
+	 *
+	 * posixsrv_common.lock is innermost, posixsrv_object_put() drops it before
+	 * calling a release handler, so nothing reaches timeout.lock while holding it.
+	 *
+	 * INVARIANT: a request is armed only while it is linked on its subsystem's list,
+	 * and every path that can release the object first drains that list, cancelling
+	 * each request. posixsrv_threadRqTimeout() pins r->object before dispatching, but
+	 * it has to read r->object first - so an object released while one of its requests
+	 * is still armed would already be gone by then. A new rq_timeout() call site must
+	 * arm under the same lock that guards the list it parks the request on, and the
+	 * matching rq_timeoutCancel() must be made under that lock too.
+	 */
+	struct {
+		handle_t lock;
+		handle_t cond;
+		rbtree_t tree;
+	} timeout;
 
 	struct {
 		int id;
@@ -183,10 +210,46 @@ void rq_timeout(request_t *r, time_t usecs)
 	gettime(&r->wakeup, NULL);
 	r->wakeup += usecs;
 
-	mutexLock(posixsrv_common.lock);
-	lib_rbInsert(&posixsrv_common.timeout, &r->linkage);
-	mutexUnlock(posixsrv_common.lock);
-	condSignal(posixsrv_common.cond);
+	mutexLock(posixsrv_common.timeout.lock);
+	lib_rbInsert(&posixsrv_common.timeout.tree, &r->linkage);
+	r->timeoutState = rq_timeoutArmed;
+	mutexUnlock(posixsrv_common.timeout.lock);
+	condSignal(posixsrv_common.timeout.cond);
+}
+
+
+int rq_timeoutCancel(request_t *r)
+{
+	int owned;
+
+	mutexLock(posixsrv_common.timeout.lock);
+
+	switch (r->timeoutState) {
+		case rq_timeoutArmed:
+			TRACE("cancel %x", r->rid);
+			lib_rbRemove(&posixsrv_common.timeout.tree, &r->linkage);
+			r->timeoutState = rq_timeoutIdle;
+			owned = 1;
+			break;
+
+		case rq_timeoutFired:
+			/*
+			 * posixsrv_threadRqTimeout() got it first and is completing the
+			 * request - it is no longer ours to touch.
+			 */
+			TRACE("lost %x", r->rid);
+			owned = 0;
+			break;
+
+		default:
+			/* Never armed: nothing to cancel, the caller owns the request. */
+			owned = 1;
+			break;
+	}
+
+	mutexUnlock(posixsrv_common.timeout.lock);
+
+	return owned;
 }
 
 
@@ -215,7 +278,7 @@ void rq_setResponse(request_t *r, int response)
 
 void rq_wakeup(request_t *r)
 {
-	TRACE("respond %x", r->rid);
+	TRACE("wakeup %x", r->rid);
 	msgRespond(r->port, &r->msg, r->rid);
 	free(r);
 }
@@ -281,6 +344,9 @@ void posixsrv_threadMain(void *arg)
 			continue;
 		}
 
+		/* no timeout is armed on this one yet */
+		r->timeoutState = rq_timeoutIdle;
+
 		o = posixsrv_object_get(rq_id(r));
 
 		/* Can't handle msg - wrong object id or wrong operation */
@@ -310,24 +376,45 @@ void posixsrv_threadMain(void *arg)
 void posixsrv_threadRqTimeout(void *arg)
 {
 	request_t *r;
+	object_t *o;
 	time_t now, timeout;
 
-	mutexLock(posixsrv_common.lock);
-
 	for (;;) {
-		r = lib_treeof(request_t, linkage, lib_rbMinimum(posixsrv_common.timeout.root));
+		mutexLock(posixsrv_common.timeout.lock);
+
+		r = lib_treeof(request_t, linkage, lib_rbMinimum(posixsrv_common.timeout.tree.root));
 		if (r != NULL) {
 			gettime(&now, NULL);
 
 			if (r->wakeup <= now) {
-				lib_rbRemove(&posixsrv_common.timeout, &r->linkage);
-				if (r->object->operations->timeout != NULL) {
-					r->object->operations->timeout(r);
+				lib_rbRemove(&posixsrv_common.timeout.tree, &r->linkage);
+				r->timeoutState = rq_timeoutFired;
+				TRACE("dequeue %x", r->rid);
+
+				/*
+				 * A deferred request holds no reference of its own, so pin the
+				 * object before anything can drop the last one. This must happen
+				 * under timeout.lock: a waker that loses rq_timeoutCancel() is
+				 * blocked on it right now, and may release the object as soon as
+				 * it runs. The handler frees the request, so keep our own pointer.
+				 */
+				o = r->object;
+				posixsrv_object_ref(o);
+
+				/* handlers take subsystem locks - see the LOCK ORDER note */
+				mutexUnlock(posixsrv_common.timeout.lock);
+
+				if (o->operations->timeout != NULL) {
+					o->operations->timeout(r);
 				}
 				else {
 					rq_setResponse(r, -ETIME);
 					rq_wakeup(r);
 				}
+
+				/* drop our reference to the object */
+				posixsrv_object_put(o);
+
 				continue;
 			}
 
@@ -337,7 +424,8 @@ void posixsrv_threadRqTimeout(void *arg)
 			timeout = 0;
 		}
 
-		condWait(posixsrv_common.cond, posixsrv_common.lock, timeout);
+		condWait(posixsrv_common.timeout.cond, posixsrv_common.timeout.lock, timeout);
+		mutexUnlock(posixsrv_common.timeout.lock);
 	}
 }
 
@@ -345,9 +433,11 @@ void posixsrv_threadRqTimeout(void *arg)
 int posixsrv_init(unsigned *srvPort, unsigned *eventPort)
 {
 	idtree_init(&posixsrv_common.objects);
-	lib_rbInit(&posixsrv_common.timeout, rq_cmp, NULL);
 	mutexCreate(&posixsrv_common.lock);
-	condCreate(&posixsrv_common.cond);
+
+	lib_rbInit(&posixsrv_common.timeout.tree, rq_cmp, NULL);
+	mutexCreate(&posixsrv_common.timeout.lock);
+	condCreate(&posixsrv_common.timeout.cond);
 
 	if (portCreate(&posixsrv_common.port) < 0) {
 		fail("port create");
