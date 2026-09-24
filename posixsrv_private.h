@@ -94,7 +94,7 @@ void rq_wakeup(request_t *r);
 void rq_setResponse(request_t *r, int retval);
 
 
-void rq_timeout(request_t *r, int timeout);
+void rq_timeout(request_t *r, time_t usecs);
 
 
 int rq_id(request_t *r);
