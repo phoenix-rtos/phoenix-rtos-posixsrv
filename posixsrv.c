@@ -218,6 +218,18 @@ void rq_timeout(request_t *r, time_t usecs)
 }
 
 
+void rq_timeoutAt(request_t *r, time_t deadline)
+{
+	r->wakeup = deadline;
+
+	mutexLock(posixsrv_common.timeout.lock);
+	lib_rbInsert(&posixsrv_common.timeout.tree, &r->linkage);
+	r->timeoutState = rq_timeoutArmed;
+	mutexUnlock(posixsrv_common.timeout.lock);
+	condSignal(posixsrv_common.timeout.cond);
+}
+
+
 int rq_timeoutCancel(request_t *r)
 {
 	int owned;
