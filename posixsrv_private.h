@@ -103,7 +103,16 @@ void rq_wakeup(request_t *r);
 void rq_setResponse(request_t *r, int retval);
 
 
+/* timeout expires `usecs` from now */
 void rq_timeout(request_t *r, time_t usecs);
+
+
+/*
+ * Timeout expires at the absolute `deadline`, expressed on the raw clock that
+ * gettime(&t, NULL) returns. A caller holding a CLOCK_REALTIME deadline must
+ * subtract the offset reported by gettime(&raw, &offs).
+ */
+void rq_timeoutAt(request_t *r, time_t deadline);
 
 
 int rq_timeoutCancel(request_t *r);
