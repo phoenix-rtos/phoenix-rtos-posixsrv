@@ -285,8 +285,10 @@ static request_t *pts_open_op(object_t *o, request_t *r)
 		err = -EPIPE;
 	else if (pty->state & SLAVE_LOCKED)
 		err = -EACCES;
-	else
+	else {
 		pty->slave_refs++;
+		_libtty_open(&pty->tty, r->msg.pid, r->msg.i.openclose.flags);
+	}
 
 	mutexUnlock(pty->mutex);
 
@@ -469,10 +471,9 @@ static request_t *ptm_close_op(object_t *o, request_t *r)
 		pty_cancelRequests(pty);
 		unlink_pts(pty);
 
-		libtty_signal_pgrp(&pty->tty, SIGHUP);
+		_libtty_hangup(&pty->tty);
 		_libtty_close(&pty->tty);
 		posixsrv_object_destroy(&pty->master);
-
 	}
 	mutexUnlock(pty->mutex);
 
@@ -568,6 +569,7 @@ static request_t *ptm_devctl_op(object_t *o, request_t *r)
 	int err = -EINVAL;
 	unsigned long request;
 	unsigned ptyid;
+	pid_t ctty;
 	const void *in_data;
 	void *out_data;
 
@@ -576,28 +578,86 @@ static request_t *ptm_devctl_op(object_t *o, request_t *r)
 	mutexLock(pty->mutex);
 	PTY_TRACE("ptm_devctl request: %lx", request);
 
+	/*
+	 * WARN: Controlling-terminal ioctls must not be forwarded to libtty from this
+	 * side of the pty.
+	 *
+	 * A pty pair here shares a single libtty_common_t, so a
+	 * master-side ctty ioctl would act on the *slave's* terminal state. Since
+	 * libtty started enforcing session permissions it compares the sender's
+	 * session against the session that claimed the pty - which is always a
+	 * session on the slave side. The master holder is in a different session
+	 * by construction (that is the point of a pty), so every one of these
+	 * would answer -ENOTTY if it fell through to the default case below.
+	 */
 	switch (request) {
-	case TIOCGPTN: /* get pty number */
-		ptyid = posixsrv_object_id(&pty->slave);
-		out_data = &ptyid;
-		err = EOK;
-		break;
+		case TIOCGPTN:
+			ptyid = posixsrv_object_id(&pty->slave);
+			out_data = &ptyid;
+			err = EOK;
+			break;
 
-	case TIOCSPTLCK: /* (un)lock slave */
-		if (!*((int *)in_data) && pty->state & SLAVE_LOCKED) {
-			pty->state &= ~SLAVE_LOCKED;
-			err = EOK;
-		}
-		else if (*((int *)in_data) && !(pty->state & SLAVE_LOCKED)) {
-			pty->state |= SLAVE_LOCKED;
-			err = EOK;
-		}
-		break;
-	default:
-		err = _libtty_ioctl(&pty->tty, r->msg.pid, request, in_data, out_data);
-		/* set out_data to NULL so that it isn't memcpy'ied back to itself */
-		out_data = NULL;
-		break;
+		case TIOCSPTLCK:
+			if (!*((int *)in_data) && pty->state & SLAVE_LOCKED) {
+				pty->state &= ~SLAVE_LOCKED;
+				err = EOK;
+			}
+			else if (*((int *)in_data) && !(pty->state & SLAVE_LOCKED)) {
+				pty->state |= SLAVE_LOCKED;
+				err = EOK;
+			}
+			break;
+
+		case TIOCGPGRP:
+			/*
+			 * An unclaimed pty has no foreground group and Linux reports it as pid 0,
+			 * which tcgetpgrp() cannot tell apart from a real group.
+			 * Report -ENOTTY instead, which is allowed.
+			 */
+			if (pty->tty.pgrp > 0) {
+				ctty = pty->tty.pgrp;
+				out_data = &ctty;
+				err = EOK;
+			}
+			else {
+				out_data = NULL;
+				err = -ENOTTY;
+			}
+			break;
+
+		case TIOCGSID:
+			if (pty->tty.sid >= 0) {
+				ctty = pty->tty.sid;
+				out_data = &ctty;
+				err = EOK;
+			}
+			else {
+				/* As above: Linux also reports -ENOTTY when no session owns the pty */
+				out_data = NULL;
+				err = -ENOTTY;
+			}
+			break;
+
+		case TIOCSPGRP:
+		case TIOCSCTTY:
+		case TIOCNOTTY:
+			/*
+			 * The master is nobody's controlling terminal, so none of the setters
+			 * may be issued through it. Letting them through would be worse than
+			 * an error: because both ends share one state, the master holder
+			 * could set the slave session's foreground group, claim the pty
+			 * out from under that session once its leader exited, or release the
+			 * claim outright.
+			 */
+			out_data = NULL;
+			err = -ENOTTY;
+			break;
+
+		default:
+			err = _libtty_ioctl(&pty->tty, r->msg.pid, request, in_data, out_data);
+			/* set out_data to NULL so that it isn't memcpy'ied back to itself */
+			out_data = NULL;
+			break;
 	}
 	mutexUnlock(pty->mutex);
 
