@@ -285,8 +285,10 @@ static request_t *pts_open_op(object_t *o, request_t *r)
 		err = -EPIPE;
 	else if (pty->state & SLAVE_LOCKED)
 		err = -EACCES;
-	else
+	else {
 		pty->slave_refs++;
+		_libtty_open(&pty->tty, r->msg.pid, r->msg.i.openclose.flags);
+	}
 
 	mutexUnlock(pty->mutex);
 
