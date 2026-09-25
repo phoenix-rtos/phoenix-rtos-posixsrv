@@ -29,6 +29,14 @@
 #define log_warn(fmt, ...)  log_sev(LOG_WARNING, fmt, ##__VA_ARGS__)
 #define log_error(fmt, ...) log_sev(LOG_ERR, fmt, ##__VA_ARGS__)
 
+
+enum {
+	rq_timeoutIdle = 0, /* no timeout armed - the subsystem owns the request */
+	rq_timeoutArmed,    /* linked in the timeout tree, still cancellable */
+	rq_timeoutFired     /* claimed by the timeout thread, which will complete it */
+};
+
+
 typedef struct request_t {
 	struct request_t *next, *prev;
 	rbnode_t linkage;
@@ -36,6 +44,7 @@ typedef struct request_t {
 
 	struct _object_t *object;
 	time_t wakeup;
+	int timeoutState;
 	msg_rid_t rid;
 	msg_t msg;
 
@@ -88,22 +97,34 @@ static inline void *rq_buf(request_t *r)
 }
 
 
-extern void rq_wakeup(request_t *r);
+void rq_wakeup(request_t *r);
 
 
-extern void rq_setResponse(request_t *r, int retval);
+void rq_setResponse(request_t *r, int retval);
 
 
-extern void rq_timeout(request_t *r, int timeout);
+/* timeout expires `usecs` from now */
+void rq_timeout(request_t *r, time_t usecs);
 
 
-extern int rq_id(request_t *r);
+/*
+ * Timeout expires at the absolute `deadline`, expressed on the raw clock that
+ * gettime(&t, NULL) returns. A caller holding a CLOCK_REALTIME deadline must
+ * subtract the offset reported by gettime(&raw, &offs).
+ */
+void rq_timeoutAt(request_t *r, time_t deadline);
 
 
-extern unsigned posixsrv_port(void);
+int rq_timeoutCancel(request_t *r);
 
 
-extern int posixsrv_object_link(object_t *o, const char *path);
+int rq_id(request_t *r);
+
+
+unsigned posixsrv_port(void);
+
+
+int posixsrv_object_link(object_t *o, const char *path);
 
 
 static inline int posixsrv_object_id(object_t *o)
@@ -112,43 +133,46 @@ static inline int posixsrv_object_id(object_t *o)
 }
 
 
-extern void posixsrv_object_destroy(object_t *o);
+void posixsrv_object_destroy(object_t *o);
 
 
-extern object_t *posixsrv_object_get(int id);
+object_t *posixsrv_object_get(int id);
 
 
-extern void posixsrv_object_ref(object_t *o);
+void posixsrv_object_ref(object_t *o);
 
 
-extern void posixsrv_object_put(object_t *o);
+void posixsrv_object_put(object_t *o);
 
 
-extern int posixsrv_object_create(object_t *o, const operations_t *ops);
+int posixsrv_object_create(object_t *o, const operations_t *ops);
 
 
-extern int pipe_create(int type, int *id, unsigned open);
+int pipe_create(int type, int *id, unsigned open);
 
 
-extern int pipe_init(void);
+int pipe_init(void);
 
 
-extern int pipe_free(object_t *o);
+int pipe_free(object_t *o);
 
 
-extern int pipe_avail(object_t *o);
+int pipe_avail(object_t *o);
 
 
-extern int pty_init(void);
+int pty_init(void);
 
 
-extern int special_init(void);
+int special_init(void);
 
 
-extern int event_init(unsigned *port);
+int event_init(unsigned *port);
 
 
-extern int tmpfile_init(void);
+int tmpfile_init(void);
+
+
+int semaphore_init(void);
 
 
 #endif

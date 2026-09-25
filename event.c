@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 
 #include <stdlib.h>
+#include <stdbool.h>
 #include <errno.h>
 #include <string.h>
 #include <sys/events.h>
@@ -644,14 +645,30 @@ static void queue_wakeup(evqueue_t *queue)
 			r = queue->requests;
 			LIST_REMOVE(&queue->requests, r);
 
-			if (queue_unpack(&r->msg, NULL, NULL, &events, &count, NULL) < 0)
+			if (queue_unpack(&r->msg, NULL, NULL, &events, &count, NULL) < 0) {
+				rq_setResponse(r, -EINVAL);
+				if (rq_timeoutCancel(r) != 0) {
+					LIST_ADD(&filled, r);
+				}
 				continue;
+			}
 
 			if ((count = _event_read(queue, events, count))) {
-				LIST_ADD(&filled, r);
 				rq_setResponse(r, count);
+				/*
+				 * Claim here, under queue->lock, not in the drain below: the
+				 * posixsrv_object_put() at the end of this loop can release the
+				 * queue, and an armed request detached from queue->requests
+				 * would leave the timeout thread dispatching on a freed object.
+				 * Losing the claim is fine - the response is already set and
+				 * queue_timeout_op() delivers it.
+				 */
+				if (rq_timeoutCancel(r) != 0) {
+					LIST_ADD(&filled, r);
+				}
 			}
 			else {
+				/* stays parked with its deadline still armed */
 				LIST_ADD(&empty, r);
 			}
 		}
@@ -665,6 +682,7 @@ static void queue_wakeup(evqueue_t *queue)
 		posixsrv_object_put(&q->object);
 	}
 
+	/* already claimed above, so these are ours to complete */
 	while ((r = filled) != NULL) {
 		LIST_REMOVE(&filled, r);
 		rq_wakeup(r);
@@ -682,9 +700,16 @@ static request_t *queue_close_op(object_t *o, request_t *r)
 
 	mutexLock(queue->lock);
 	while ((p = queue->requests) != NULL) {
+		/*
+		 * Unlink and set response under queue->lock, then claim. If the
+		 * timeout thread owns the request it observes it unlinked and
+		 * delivers this response.
+		 */
 		LIST_REMOVE(&queue->requests, p);
 		rq_setResponse(p, -EBADF);
-		rq_wakeup(p);
+		if (rq_timeoutCancel(p) != 0) {
+			rq_wakeup(p);
+		}
 	}
 
 	while (queue->notes != NULL) {
@@ -737,7 +762,7 @@ static request_t *queue_write_op(object_t *o, request_t *r)
 	mutexLock(queue->lock);
 	if (!(count = _queue_readwrite(queue, subs, subcnt, events, evcnt)) && evcnt && timeout) {
 		if (timeout > 0)
-			rq_timeout(r, timeout);
+			rq_timeout(r, (time_t)timeout * 1000);
 
 		LIST_ADD(&queue->requests, r);
 		r = NULL;
@@ -770,7 +795,7 @@ static request_t *queue_devctl_op(object_t *o, request_t *r)
 	mutexLock(queue->lock);
 	if (!(count = _queue_readwrite(queue, subs, subcnt, events, evcnt))) {
 		LIST_ADD(&queue->requests, r);
-		rq_timeout(r, timeout);
+		rq_timeout(r, (time_t)timeout * 1000);
 		r = NULL;
 	}
 	else {
@@ -788,10 +813,31 @@ static void queue_timeout_op(request_t *r)
 	TRACE("queue_timeout_op()");
 
 	evqueue_t *queue = evqueue(r->object);
+	bool parked;
 
 	mutexLock(queue->lock);
-	LIST_REMOVE(&queue->requests, r);
+	/*
+	 * Still linked means still parked, so no waker has produced a response.
+	 * Unlinked means one did - it filled in the event count or -EBADF under
+	 * this same lock and then lost rq_timeoutCancel(), so deliver that rather
+	 * than overwriting it.
+	 */
+	parked = (r->next != NULL);
+	if (parked) {
+		LIST_REMOVE(&queue->requests, r);
+	}
 	mutexUnlock(queue->lock);
+
+	if (parked) {
+		/*
+		 * Parked because no events were pending. The deadline passed, so answer
+		 * with that same empty result instead of leaving the client blocked in
+		 * msgSend() forever.
+		 */
+		rq_setResponse(r, 0);
+	}
+
+	rq_wakeup(r);
 }
 
 
@@ -848,7 +894,9 @@ static request_t *sink_write_op(object_t *o, request_t *r)
 	eventcnt = r->msg.i.size / sizeof(event_t);
 	memcpy(events, r->msg.i.data, r->msg.i.size);
 	rq_setResponse(r, EOK);
-	rq_wakeup(r);
+	if (rq_timeoutCancel(r) != 0) {
+		rq_wakeup(r);
+	}
 
 	event_register(events, eventcnt);
 

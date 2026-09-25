@@ -111,17 +111,23 @@ static void pty_cancelRequests(pty_t *pty)
 
 	while ((r = pty->write_requests) != NULL) {
 		LIST_REMOVE(&pty->write_requests, r);
-		rq_wakeup(r);
+		if (rq_timeoutCancel(r) != 0) {
+			rq_wakeup(r);
+		}
 	}
 
 	while ((r = pty->read_requests) != NULL) {
 		LIST_REMOVE(&pty->read_requests, r);
-		rq_wakeup(r);
+		if (rq_timeoutCancel(r) != 0) {
+			rq_wakeup(r);
+		}
 	}
 
 	while ((r = pty->read_master) != NULL) {
 		LIST_REMOVE(&pty->read_master, r);
-		rq_wakeup(r);
+		if (rq_timeoutCancel(r) != 0) {
+			rq_wakeup(r);
+		}
 	}
 }
 
@@ -232,7 +238,14 @@ static void pts_timeout(request_t *r)
 	pty_t *pty = pty_slave(r->object);
 
 	mutexLock(pty->mutex);
-	LIST_REMOVE(&pty->read_requests, r);
+	/*
+	 * A waker may have unlinked the request before losing the race for it in
+	 * rq_timeoutCancel(). LIST_REMOVE() NULLs both links, so this tells the two
+	 * cases apart.
+	 */
+	if (r->next != NULL) {
+		LIST_REMOVE(&pty->read_requests, r);
+	}
 	mutexUnlock(pty->mutex);
 
 	rq_wakeup(r);
@@ -250,7 +263,7 @@ static request_t *_pts_read(pty_t *pty, request_t *r)
 		LIST_ADD(&pty->read_requests, r);
 
 		if (r->pts_read.timeout_ms)
-			rq_timeout(r, r->pts_read.timeout_ms);
+			rq_timeout(r, (time_t)r->pts_read.timeout_ms * 1000);
 
 		r = NULL;
 	}
@@ -364,8 +377,17 @@ static request_t *ptm_write_op(object_t *o, request_t *r)
 	if (wake_reader && ((reader = pty->read_requests) != NULL)) {
 		LIST_REMOVE(&pty->read_requests, reader);
 
-		if ((reader = _pts_read(pty, reader)) != NULL)
-			rq_wakeup(reader);
+		/*
+		 * Claim before retrying _pts_read(): the request may be armed,
+		 * and _pts_read() re-arms it when it parks it again. A request
+		 * the timeout thread has claimed is left to it.
+		 */
+		if (rq_timeoutCancel(reader) != 0) {
+			reader = _pts_read(pty, reader);
+			if (reader != NULL) {
+				rq_wakeup(reader);
+			}
+		}
 
 		wake_reader = _libtty_poll_status(&pty->tty) & POLLIN;
 	}
@@ -421,8 +443,12 @@ static request_t *_ptm_read(pty_t *pty, request_t *r)
 	if (wake_writer && (writer = pty->write_requests) != NULL) {
 		LIST_REMOVE(&pty->write_requests, writer);
 
-		if ((writer = _pts_write(pty, writer)) != NULL)
-			rq_wakeup(writer);
+		if (rq_timeoutCancel(writer) != 0) {
+			writer = _pts_write(pty, writer);
+			if (writer != NULL) {
+				rq_wakeup(writer);
+			}
+		}
 
 		wake_writer = _libtty_poll_status(&pty->tty) & POLLOUT;
 	}
@@ -614,8 +640,12 @@ void ptm_signalReady(void *arg)
 
 	if ((r = pty->read_master) != NULL) {
 		LIST_REMOVE(&pty->read_master, r);
-		if ((r = _ptm_read(pty, r)) != NULL)
-			rq_wakeup(r);
+		if (rq_timeoutCancel(r) != 0) {
+			r = _ptm_read(pty, r);
+			if (r != NULL) {
+				rq_wakeup(r);
+			}
+		}
 	}
 }
 
@@ -692,7 +722,7 @@ static request_t *ptmx_open_op(object_t *ptmx, request_t *r)
 }
 
 
-int pty_init()
+int pty_init(void)
 {
 	object_t *o;
 	int err;
