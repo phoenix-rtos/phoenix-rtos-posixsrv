@@ -24,6 +24,8 @@ include $(binary.mk)
 ALL_COMPONENTS := posixsrv libposixsrv
 DEFAULT_COMPONENTS := $(ALL_COMPONENTS)
 
+include $(wildcard tests/Makefile)
+
 # create generic targets
 .PHONY: all install clean
 all: $(DEFAULT_COMPONENTS)

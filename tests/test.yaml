@@ -1,0 +1,7 @@
+test:
+  type: unity
+  tests:
+    - name: rqtimeout
+      execute: test-rqtimeout
+      targets:
+        exclude: [host-generic-pc]

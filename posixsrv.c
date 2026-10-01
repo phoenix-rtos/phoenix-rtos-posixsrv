@@ -191,42 +191,70 @@ unsigned posixsrv_port(void)
 }
 
 
+/*
+ * Orders the deferred requests by deadline, earliest first, so that
+ * lib_rbMinimum() hands posixsrv_threadRqTimeout() the request that expires
+ * soonest. The order is total.
+ */
 static int rq_cmp(rbnode_t *n1, rbnode_t *n2)
 {
-	request_t *r1, *r2;
-	r1 = lib_treeof(request_t, linkage, n1);
-	r2 = lib_treeof(request_t, linkage, n2);
+	request_t *r1 = lib_treeof(request_t, linkage, n1);
+	request_t *r2 = lib_treeof(request_t, linkage, n2);
 
-	if (r2->wakeup > r1->wakeup)
-		return 1;
-	else if (r2->wakeup < r1->wakeup)
-		return -1;
-	return 0;
+	if (r1->wakeup != r2->wakeup) {
+		return (r1->wakeup > r2->wakeup) ? 1 : -1;
+	}
+
+	if (r1 == r2) {
+		return 0;
+	}
+
+	return ((uintptr_t)r1 > (uintptr_t)r2) ? 1 : -1;
 }
 
 
-void rq_timeout(request_t *r, time_t usecs)
+/* Arms request at deadline. Call with timeout.lock held. */
+static void _rq_timeoutArm(request_t *r, time_t deadline)
 {
-	gettime(&r->wakeup, NULL);
-	r->wakeup += usecs;
+	/*
+	 * Arming a request that is already armed, or one the timeout thread has
+	 * already claimed, is a caller bug.
+	 */
+	if (r->timeoutState != rq_timeoutIdle) {
+		log_error("request %x is already armed or fired", r->rid);
+		return;
+	}
 
-	mutexLock(posixsrv_common.timeout.lock);
-	lib_rbInsert(&posixsrv_common.timeout.tree, &r->linkage);
+	r->wakeup = deadline;
+
+	/*
+	 * rq_cmp() is a total order and an idle request is not in the tree, so
+	 * nothing can compare equal to r here.
+	 */
+	if (lib_rbInsert(&posixsrv_common.timeout.tree, &r->linkage) != NULL) {
+		log_error("request %x is idle but already linked", r->rid);
+		return;
+	}
+
 	r->timeoutState = rq_timeoutArmed;
-	mutexUnlock(posixsrv_common.timeout.lock);
-	condSignal(posixsrv_common.timeout.cond);
 }
 
 
 void rq_timeoutAt(request_t *r, time_t deadline)
 {
-	r->wakeup = deadline;
-
 	mutexLock(posixsrv_common.timeout.lock);
-	lib_rbInsert(&posixsrv_common.timeout.tree, &r->linkage);
-	r->timeoutState = rq_timeoutArmed;
+	_rq_timeoutArm(r, deadline);
 	mutexUnlock(posixsrv_common.timeout.lock);
 	condSignal(posixsrv_common.timeout.cond);
+}
+
+
+void rq_timeout(request_t *r, time_t usecs)
+{
+	time_t now;
+
+	gettime(&now, NULL);
+	rq_timeoutAt(r, now + usecs);
 }
 
 
