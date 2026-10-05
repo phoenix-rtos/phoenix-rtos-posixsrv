@@ -135,10 +135,11 @@ static void semaphore_slotPut(void)
 
 
 /*
- * `deadlineUs` is the absolute CLOCK_REALTIME deadline in microseconds, used
- * only by semaphore_downTimed.
+ * `deadlineUs` is the absolute deadline in microseconds, measured on `clock`
+ * (PH_CLOCK_REALTIME or PH_CLOCK_MONOTONIC). Both are used only by
+ * semaphore_downTimed and ignored by the other modes.
  */
-static int semaphore_down(shared_semaphore_t *sem, request_t *request, int mode, time_t deadlineUs)
+static int semaphore_down(shared_semaphore_t *sem, request_t *request, int mode, time_t deadlineUs, int clock)
 {
 	int ret;
 	time_t now, offs;
@@ -159,16 +160,24 @@ static int semaphore_down(shared_semaphore_t *sem, request_t *request, int mode,
 	else {
 		gettime(&now, &offs);
 
-		if (deadlineUs <= (now + offs)) {
+		/*
+		 * The timeout thread compares against the raw clock, and gettime()
+		 * reports realtime as raw + offs. So a realtime deadline is compared
+		 * against raw + offs and then has the offset dropped, while a monotonic
+		 * deadline is already on the raw clock and needs neither.
+		 */
+		if (clock == PH_CLOCK_REALTIME) {
+			now += offs;
+		}
+		else {
+			offs = 0;
+		}
+
+		if (deadlineUs <= now) {
 			ret = -ETIMEDOUT;
 		}
 		else {
 			_semaphore_enqueue(sem, request);
-
-			/*
-			 * gettime() reports realtime as raw + offs and the timeout thread
-			 * compares against raw, so drop the offset.
-			 */
 			rq_timeoutAt(request, deadlineUs - offs);
 			ret = -EBUSY;
 		}
@@ -390,7 +399,7 @@ static request_t *semaphore_devctl_op(object_t *object, request_t *request)
 {
 	shared_semaphore_t *sem = (shared_semaphore_t *)object;
 	unsigned long cmd;
-	struct timespec abstime;
+	sem_timeout_t timeout;
 	time_t deadline = -1;
 	int ret = EOK;
 	const void *in;
@@ -406,7 +415,7 @@ static request_t *semaphore_devctl_op(object_t *object, request_t *request)
 
 		case SEM_DOWN_TRY:
 			SEMAPHORE_TRACE("devctl(%s): DOWN_TRY", sem->name);
-			ret = semaphore_down(sem, request, semaphore_downTry, 0);
+			ret = semaphore_down(sem, request, semaphore_downTry, -1, -1);
 			break;
 
 		case SEM_DOWN_TIMEOUT:
@@ -415,7 +424,17 @@ static request_t *semaphore_devctl_op(object_t *object, request_t *request)
 				break;
 			}
 
-			memcpy(&abstime, in, sizeof(abstime));
+			memcpy(&timeout, in, sizeof(timeout));
+
+			if ((timeout.abstime.tv_nsec < 0) || (timeout.abstime.tv_nsec >= 1000L * 1000L * 1000L)) {
+				ret = -EINVAL;
+				break;
+			}
+
+			if ((timeout.clock != PH_CLOCK_REALTIME) && (timeout.clock != PH_CLOCK_MONOTONIC)) {
+				ret = -EINVAL;
+				break;
+			}
 
 			/*
 			 * TODO: the deadline is carried as a timespec but the request
@@ -423,15 +442,15 @@ static request_t *semaphore_devctl_op(object_t *object, request_t *request)
 			 * overflows here. Rework rq_timeout*() to take a timespec, then this
 			 * conversion goes away. Rounds up, so the wait never ends early.
 			 */
-			deadline = abstime.tv_sec * 1000000 + (abstime.tv_nsec + 999) / 1000;
+			deadline = timeout.abstime.tv_sec * 1000000 + (timeout.abstime.tv_nsec + 999) / 1000;
 
-			SEMAPHORE_TRACE("devctl(%s): DOWN_TIMEOUT %lld", sem->name, deadline);
-			ret = semaphore_down(sem, request, semaphore_downTimed, deadline);
+			SEMAPHORE_TRACE("devctl(%s): DOWN_TIMEOUT %lld clock %d", sem->name, deadline, timeout.clock);
+			ret = semaphore_down(sem, request, semaphore_downTimed, deadline, timeout.clock);
 			break;
 
 		case SEM_DOWN:
 			SEMAPHORE_TRACE("devctl(%s): DOWN", sem->name);
-			ret = semaphore_down(sem, request, semaphore_downBlock, 0);
+			ret = semaphore_down(sem, request, semaphore_downBlock, -1, -1);
 			break;
 
 		case SEM_GETVALUE:
