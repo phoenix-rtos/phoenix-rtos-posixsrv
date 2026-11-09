@@ -175,4 +175,6 @@ int tmpfile_init(void);
 int semaphore_init(void);
 
 
+int shm_init(void);
+
 #endif

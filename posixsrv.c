@@ -528,6 +528,11 @@ int posixsrv_init(unsigned *srvPort, unsigned *eventPort)
 		return -1;
 	}
 
+	if(shm_init() < 0){
+		fail("shm init");
+		return -1;
+	}
+
 	if (srvPort != NULL) {
 		*srvPort = posixsrv_common.port;
 	}

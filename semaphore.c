@@ -25,7 +25,7 @@
 
 #include "posixsrv_private.h"
 
-#if 0
+#if 1
 #define SEMAPHORE_TRACE(str, ...) printf("posixsrv semaphore: " str "\n", ##__VA_ARGS__);
 #else
 #define SEMAPHORE_TRACE(str, ...)
