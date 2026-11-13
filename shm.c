@@ -7,6 +7,7 @@
 
 #include "posixsrv_private.h"
 
+
 // #define SHM_VERBOSE
 #ifdef SHM_VERBOSE
 #define SHM_TRACE(fmt, ...) printf("shm:" fmt "\n", ##__VA_ARGS__)
@@ -14,11 +15,13 @@
 #define SHM_TRACE(fmt, ...)
 #endif
 
+
 struct {
 	pthread_mutex_t lock;
 } shm_common = {
 	.lock = PTHREAD_MUTEX_INITIALIZER
 };
+
 
 typedef struct {
 	/* object has to be first since it also acts as linkage */
@@ -32,6 +35,7 @@ typedef struct {
 	bool unlinked;
 	bool linkDropped;
 } shared_mem_t;
+
 
 static request_t *shm_open_op(object_t *object, request_t *request)
 {
@@ -48,6 +52,7 @@ static request_t *shm_open_op(object_t *object, request_t *request)
 	return request;
 }
 
+
 static request_t *shm_truncate_op(object_t *object, request_t *request)
 {
 	shared_mem_t *shm_mem = (shared_mem_t *)object;
@@ -62,6 +67,7 @@ static request_t *shm_truncate_op(object_t *object, request_t *request)
 	return request;
 }
 
+
 static request_t *shm_close_op(object_t *object, request_t *request)
 {
 	shared_mem_t *shm_mem = (shared_mem_t *)object;
@@ -73,6 +79,7 @@ static request_t *shm_close_op(object_t *object, request_t *request)
 	if (shm_mem->opens > 0) {
 		shm_mem->opens--;
 	}
+
 	last = shm_mem->unlinked && (shm_mem->opens == 0) && shm_mem->linkDropped;
 	if (last) {
 		shm_mem->linkDropped = true;
@@ -89,6 +96,7 @@ static request_t *shm_close_op(object_t *object, request_t *request)
 	return request;
 }
 
+
 static request_t *shm_read_op(object_t *object, request_t *request)
 {
 #ifdef SHM_VERBOSE
@@ -102,6 +110,7 @@ static request_t *shm_read_op(object_t *object, request_t *request)
 	rq_setResponse(request, request->msg.o.size);
 	return request;
 }
+
 
 static request_t *shm_destroy_op(object_t *object, request_t *request)
 {
@@ -142,6 +151,7 @@ static request_t *shm_destroy_op(object_t *object, request_t *request)
 	return request;
 }
 
+
 static request_t *shm_unlink_op(object_t *object, request_t *request)
 {
 	shared_mem_t *shm_mem = (shared_mem_t *)object;
@@ -163,10 +173,12 @@ static request_t *shm_unlink_op(object_t *object, request_t *request)
 	return request;
 }
 
+
 static void shm_release_op(object_t *object)
 {
 	free(object);
 }
+
 
 static request_t *shm_getAttr_op(object_t *object, request_t *request)
 {
@@ -187,6 +199,7 @@ static request_t *shm_getAttr_op(object_t *object, request_t *request)
 	return request;
 }
 
+
 static const operations_t shm_ops = {
 	.open = shm_open_op,
 	.truncate = shm_truncate_op,
@@ -197,6 +210,7 @@ static const operations_t shm_ops = {
 	.getattr = shm_getAttr_op,
 	.release = shm_release_op,
 };
+
 
 static int shm_create(const char *name, ssize_t len, int *id)
 {
@@ -247,6 +261,7 @@ static int shm_create(const char *name, ssize_t len, int *id)
 	return EOK;
 }
 
+
 static request_t *shm_create_op(object_t *srv, request_t *request)
 {
 	int id = 0, ret;
@@ -264,9 +279,11 @@ static request_t *shm_create_op(object_t *srv, request_t *request)
 	return request;
 }
 
+
 static const operations_t shm_control_ops = {
 	.create = shm_create_op
 };
+
 
 int shm_init(void)
 {

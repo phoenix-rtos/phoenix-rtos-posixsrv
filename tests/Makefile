@@ -17,4 +17,10 @@ LIBS := unity
 
 include $(test-binary.mk)
 
+NAME := test-shm
+LOCAL_SRCS := test_shm.c
+LIBS := unity
+
+include $(test-binary.mk)
+
 endif
